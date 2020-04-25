@@ -17,19 +17,104 @@ class TestAuctions(unittest.TestCase):
 		
 
 	def test_first_price_1(self):
+		auction_items = self.auction_items
 		bids = [
-				Bid("bidder1", self.auction_items[0], bid_per_item=1.0, total_limit=1.0),
-				Bid("bidder2", self.auction_items[0], bid_per_item=2.0, total_limit=2.0)
+				Bid("bidder1", auction_items[0], bid_per_item=1.0, total_limit=1.0),
+				Bid("bidder2", auction_items[0], bid_per_item=2.0, total_limit=2.0)
 		]
-		results = self.first_price_auction.run_auction(bids, self.auction_items)
+
+		results = self.first_price_auction.run_auction(bids, auction_items)
 		bid_1_result = results.get_result(bids[0])
 		bid_2_result = results.get_result(bids[1])
 		unallocated = results.get_unallocated()
 		
 		self.assertEqual(bid_1_result, { })
-		self.assertEqual(bid_2_result, { self.auction_items[0] : 2.0 })
-		self.assertEqual(unallocated, { self.auction_items[1] : 0.0, 
-									    self.auction_items[2] : 0.0 })
+		self.assertEqual(bid_2_result, { auction_items[0] : 2.0 })
+		self.assertEqual(unallocated, { auction_items[1] : 0.0, 
+									    auction_items[2] : 0.0 })
+
+	def test_first_price_2(self):
+		auction_items = self.auction_items
+		bids = [
+				Bid("bidder1", auction_items[0], bid_per_item=1.0, total_limit=1.0),
+				Bid("bidder2", auction_items[1], bid_per_item=2.0, total_limit=2.0)
+		]
+
+		results = self.first_price_auction.run_auction(bids, auction_items)
+		bid_1_result = results.get_result(bids[0])
+		bid_2_result = results.get_result(bids[1])
+		unallocated = results.get_unallocated()
+		
+		self.assertEqual(bid_1_result, { auction_items[0] : 1.0 })
+		self.assertEqual(bid_2_result, { auction_items[1] : 2.0 })
+		self.assertEqual(unallocated, { auction_items[2] : 0.0 })
+
+	def test_first_price_3(self):
+		auction_items = self.auction_items
+		bids = [
+				Bid("bidder1", self.auction_items[0], bid_per_item=1.0, total_limit=1.0),
+				Bid("bidder2", self.auction_items[1], bid_per_item=2.0, total_limit=2.0),
+				Bid("bidder3", self.auction_items[2], bid_per_item=1.5, total_limit=1.5)
+		]
+		results = self.first_price_auction.run_auction(bids, auction_items)
+		bid_1_result = results.get_result(bids[0])
+		bid_2_result = results.get_result(bids[1])
+		bid_3_result = results.get_result(bids[2])
+		unallocated = results.get_unallocated()
+		
+		self.assertEqual(bid_1_result, { auction_items[0] : 1.0 })
+		self.assertEqual(bid_2_result, { auction_items[1] : 2.0 })
+		self.assertEqual(bid_3_result, { auction_items[2] : 1.5 })
+		self.assertEqual(unallocated, { })
+
+	def test_first_price_4(self):
+		auction_items = self.auction_items
+		bids = [
+				Bid("bidder1", self.auction_items[0], bid_per_item=1.0, total_limit=1.0),
+				Bid("bidder1", self.auction_items[0], bid_per_item=2.0, total_limit=2.0),
+				Bid("bidder1", self.auction_items[1], bid_per_item=1.5, total_limit=1.5)
+		]
+		results = self.first_price_auction.run_auction(bids, auction_items)
+		bid_1_result = results.get_result(bids[0])
+		bid_2_result = results.get_result(bids[1])
+		bid_3_result = results.get_result(bids[2])
+		unallocated = results.get_unallocated()
+		
+		self.assertEqual(bid_1_result, { })
+		self.assertEqual(bid_2_result, { auction_items[0] : 2.0 })
+		self.assertEqual(bid_3_result, { auction_items[1] : 1.5 })
+		self.assertEqual(unallocated, { auction_items[2] : 0 })
+
+	def test_first_price_4(self):
+		auction_items = self.auction_items
+		temp_item = AuctionItem(name=None, item_type={"white", "horse"}, owner=None)
+		bids = [
+				Bid("bidder1", temp_item, bid_per_item=1.0, total_limit=2.0),
+		]
+		results = self.first_price_auction.run_auction(bids, auction_items, self.first_price_auction.items_to_bids_by_item_type)
+		bid_1_result = results.get_result(bids[0])
+		unallocated = results.get_unallocated()
+
+		self.assertEqual(bid_1_result, { auction_items[1] : 1.0, 
+										 auction_items[2] : 1.0 
+										})
+		self.assertEqual(unallocated, { auction_items[0] : 0 })
+
+	def test_first_price_5(self):
+		auction_items = self.auction_items
+		temp_item = AuctionItem(name=None, item_type={"white", "horse"}, owner=None)
+		bids = [
+				Bid("bidder1", temp_item, bid_per_item=1.5, total_limit=2.0),
+		]
+		results = self.first_price_auction.run_auction(bids, auction_items, self.first_price_auction.items_to_bids_by_item_type)
+		bid_1_result = results.get_result(bids[0])
+		unallocated = results.get_unallocated()
+
+		self.assertEqual(bid_1_result, { auction_items[1] : 1.5
+										})
+		self.assertEqual(unallocated, { auction_items[0] : 0.0,
+										auction_items[2] : 0.0 
+		 								})
 
 if __name__ == '__main__':
 	unittest.main()

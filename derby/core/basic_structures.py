@@ -26,6 +26,9 @@ class AuctionItem:
     def __hash__(self):
         return hash(self.item_id)
 
+    def __repr__(self):
+        return "{}(item_id: {}, name: {})".format(self.__class__.__name__, self.item_id, self.name)
+
     def copy(self):
         c = AuctionItem(self.name, self.item_type, self.owner)
         return c
@@ -77,6 +80,9 @@ class Bid:
     def __hash__(self):
         return hash(self.uid)
 
+    def __repr__(self):
+        return "{}(uid: {}, bidder: {}, auction_item: {})".format(self.__class__.__name__, self.uid, self.bidder, self.auction_item.item_id)
+
     def deduct_limit(self, price: float):
         self.total_limit -= price
 
@@ -86,8 +92,11 @@ class AuctionResults:
     allocations_and_expenditures: Dict[Bid, Dict[AuctionItem, float]]
     __UNALLOC_KEY: Bid = None
 
-    def __init__(self, allocations_and_expenditures: Dict[Bid, Dict[AuctionItem, float]] = {}):
-        self.allocations_and_expenditures = allocations_and_expenditures
+    def __init__(self, allocations_and_expenditures: Dict[Bid, Dict[AuctionItem, float]] = None):
+        if allocations_and_expenditures == None:
+            self.allocations_and_expenditures = dict()
+        else:
+            self.allocations_and_expenditures = allocations_and_expenditures
         # Add an __UNALLOC_KEY to represent any items that go unallocated
         self.set_result(self.__UNALLOC_KEY)
 

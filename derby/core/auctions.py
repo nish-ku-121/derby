@@ -35,7 +35,7 @@ class AbstractAuction(ABC):
                     if bid.bid_per_item > best_bid.bid_per_item:
                         uniques[temp_key] = bid
             else:
-                raise Exception('bid {} has no owner!'.format(bid.uid))
+                raise Exception('bid {} is not owned by any bidder!'.format(bid.uid))
         return list(uniques.values())
 
     @staticmethod
@@ -65,7 +65,7 @@ class AbstractAuction(ABC):
 
         for bid in bids:
             if (bid.auction_item != None):
-                bid_item_type = b.auction_item.item_type
+                bid_item_type = bid.auction_item.item_type
                 if (bid_item_type != None):
                     bid_item_type = frozenset(bid_item_type)
                 else:
@@ -95,14 +95,14 @@ class KthPriceAuction(AbstractAuction):
         items_to_bids_mapping = items_to_bids_mapping_func(bids, auction_items)
         for item in auction_items:
             relevant_bids = items_to_bids_mapping[item]
-            # If there are no bids for the item, then add it as unallocated
-            if (len(relevant_bids) == 0):
-                results.set_unallocated(item)
-                continue
             # Allow only one bid per bidder
             relevant_bids = self.dedup_by_bidder(relevant_bids)
             # If a bid exceeds it's total limit, then ignore it
             relevant_bids = list(filter(lambda b: b.bid_per_item <= b.total_limit, relevant_bids))
+            # If there are no bids for the item, then add it as unallocated
+            if (len(relevant_bids) == 0):
+                results.set_unallocated(item)
+                continue
             # Compute the price, which is defined as the kth largest of the relevant bids.
             # Note the price of the kth largest bid is zero if there is no such bid.
             price = kth_largest([bid.bid_per_item for bid in relevant_bids], self.k, 0.0)
