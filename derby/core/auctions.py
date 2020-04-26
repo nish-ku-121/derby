@@ -76,6 +76,18 @@ class AbstractAuction(ABC):
                         rtn[item].append(bid)
         return rtn
 
+    @staticmethod
+    def items_to_bids_by_item_type_submatch(bids, auction_items):
+        rtn = {}
+        for item in auction_items:
+            if not (item in rtn):
+                rtn[item] = []
+            temp_list = rtn[item]
+            for bid in bids:
+                if bid.auction_item.item_type_submatches(item):
+                    temp_list.append(bid)
+        return rtn
+
 
 class KthPriceAuction(AbstractAuction):
     k: int
