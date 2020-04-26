@@ -32,6 +32,9 @@ class AuctionItem:
     def copy(self):
         c = AuctionItem(self.name, self.item_type, self.owner)
         return c
+
+    def item_type_submatches(self, auction_item):
+        return self.item_type <= auction_item.item_type
     '''
     @staticmethod
     def split_quantity(auction_item:AuctionItem, orig_item_new_quantity: int, copy_item_new_quantity: int):

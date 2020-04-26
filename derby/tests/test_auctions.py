@@ -192,6 +192,47 @@ class TestSecondPriceAuction(unittest.TestCase):
 		self.assertEqual(bid_2_result, { auction_items[1] : 1.0 })
 		self.assertEqual(unallocated, { auction_items[0] : 0.0 })
 
+	def test_4(self):
+		auction_items = self.auction_items
+		item_to_bids_mapping_func = self.auction.items_to_bids_by_item_type_submatch
+		temp_item = AuctionItem(name=None, item_type={"horse"}, owner=None)
+		bids = [
+				Bid("bidder1", temp_item, bid_per_item=1.0, total_limit=3.0),
+		]
+
+		results = self.auction.run_auction(bids, auction_items, item_to_bids_mapping_func)
+		bid_1_result = results.get_result(bids[0])
+		unallocated = results.get_unallocated()
+		
+		self.assertEqual(bid_1_result, { auction_items[0] : 0.0,
+										 auction_items[1] : 0.0,
+										 auction_items[2] : 0.0 })
+		self.assertEqual(unallocated, { })
+
+	def test_5(self):
+		auction_items = self.auction_items
+		item_to_bids_mapping_func = self.auction.items_to_bids_by_item_type_submatch
+		temp_item = AuctionItem(name=None, item_type={"white"}, owner=None)
+		bids = [
+				Bid("bidder1", temp_item, bid_per_item=2.1, total_limit=3.0),
+				Bid("bidder2", temp_item, bid_per_item=2.0, total_limit=3.0),
+				Bid("bidder3", auction_items[0], bid_per_item=1.1, total_limit=3.0),
+				Bid("bidder4", auction_items[0], bid_per_item=1.2, total_limit=3.0),
+		]
+
+		results = self.auction.run_auction(bids, auction_items, item_to_bids_mapping_func)
+		bid_1_result = results.get_result(bids[0])
+		bid_2_result = results.get_result(bids[1])
+		bid_3_result = results.get_result(bids[2])
+		bid_4_result = results.get_result(bids[3])
+		unallocated = results.get_unallocated()
+
+		self.assertEqual(bid_1_result, { auction_items[1] : 2.0 })
+		self.assertEqual(bid_2_result, { auction_items[2] : 0.0 })
+		self.assertEqual(bid_3_result, { })
+		self.assertEqual(bid_4_result, { auction_items[0] : 1.1 })
+		self.assertEqual(unallocated, { })
+
 		
 
 	
