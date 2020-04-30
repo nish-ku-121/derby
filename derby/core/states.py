@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from random import choice
 from typing import Set, List, Dict, OrderedDict
 import uuid
+from derby.core.ad_structures import Campaign
 
 
 
@@ -16,7 +17,7 @@ class State(ABC):
         return isinstance(other, self.__class__) and self.uid == other.uid
 
     def __hash__(self):
-        return hash(self.uid)
+        return hash(self.__class__.__name__ + str(self.uid))
 
 
 class BidderState(State):
@@ -25,3 +26,17 @@ class BidderState(State):
     def __init__(self, bidder):
         super().__init__()
         self.bidder = bidder
+
+
+class BidderCampaignState(BidderState):
+    campaign: Campaign
+    spend: float ## How much has been spent so far on the campaign (e.g. via bids won)
+    impressions: int ## How many impressions have been acquired
+    timestep: int ## e.g. day of the adx game
+
+    def __init__(self, bidder, campaign: Campaign, spend=0.0, impressions=None, timestep=0):
+        super().__init__(bidder)
+        self.campaign = campaign
+        self.spend = spend
+        self.impressions = impressions
+        self.timestep = timestep
