@@ -28,7 +28,7 @@ class BidderState(State):
         self.bidder = bidder
 
 
-class BidderCampaignState(BidderState):
+class CampaignBidderState(BidderState):
     campaign: Campaign
     spend: float ## How much has been spent so far on the campaign (e.g. via bids won)
     impressions: int ## How many impressions have been acquired
