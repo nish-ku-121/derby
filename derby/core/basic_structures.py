@@ -23,7 +23,7 @@ class AuctionItem:
         return isinstance(other, self.__class__) and self.item_id == other.item_id
 
     def __hash__(self):
-        return hash(self.item_id)
+        return hash(self.__class__.__name__ + str(self.item_id))
 
     def __repr__(self):
         return "{}(item_id: {}, name: {})".format(self.__class__.__name__, self.item_id, self.name)
@@ -80,7 +80,7 @@ class Bid:
         return isinstance(other, self.__class__) and self.uid == other.uid
 
     def __hash__(self):
-        return hash(self.uid)
+        return hash(self.__class__.__name__ + str(self.uid))
 
     def __repr__(self):
         return "{}(uid: {}, bidder: {}, auction_item: {})".format(self.__class__.__name__, self.uid, self.bidder, self.auction_item.item_id)
