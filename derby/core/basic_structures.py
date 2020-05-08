@@ -29,8 +29,13 @@ class AuctionItem:
         return "{}(item_id: {}, name: {})".format(self.__class__.__name__, self.item_id, self.name)
 
     def copy(self):
-        c = AuctionItem(self.name, self.item_type, self.owner)
+        c = AuctionItem(self.name, self.item_type, None)
         return c
+
+    @staticmethod
+    def is_copy(item1, item2):
+        return (item1.__class__ == item2.__class__) and (item1.name == item2.name and 
+                                                         item1.item_type == item2.item_type)
 
     def item_type_submatches(self, auction_item):
         return self.item_type <= auction_item.item_type
@@ -130,3 +135,20 @@ class AuctionResults:
 
     def get_total_expenditure(self, bid: Bid):
         return sum(self.get_expenditures(bid))
+
+    def __iter__(self):
+        return AuctionResultsIterator(self)
+
+
+class AuctionResultsIterator:
+    def __init__(self, auction_results):
+        self.__auction_results_bids = list(auction_results.allocations_and_expenditures.keys())
+        self.__auction_results_bids.remove(auction_results.__UNALLOC_KEY)
+        self.__index = 0
+
+    def __next__(self):
+        if (self.__index >= len(self.__auction_results_bids)):
+            raise StopIteration
+        elem = self.__auction_results_bids[self.__index]
+        self.__index += 1
+        return elem
