@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, TypeVar
+from derby.core.basic_structures import AuctionItem
 import numpy as np
 
 
@@ -33,7 +34,7 @@ class PMF:
             del self.__pmf[item]
             self.__total_weight -= temp_weight
 
-    def draw_n(self, n: int, replace=False):
+    def draw_n(self, n: int, replace=True):
         items = []
         probs = []
         total_weight = float(self.__total_weight)
@@ -44,3 +45,15 @@ class PMF:
 
     def get_total_weight(self):
         return self.__total_weight
+
+
+class AuctionItemPMF(PMF):
+
+    def draw_n(self, n: int, replace=True):
+        rtn = []
+        items = super().draw_n(n, replace)
+        for item in items:
+            if (not isinstance(item, AuctionItem)):
+                raise Exception("item {} in AuctionItemPMF is not an AuctionItem!".format(item))
+            rtn.append(item.copy())
+        return rtn
