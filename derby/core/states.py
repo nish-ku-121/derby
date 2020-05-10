@@ -34,7 +34,7 @@ class CampaignBidderState(BidderState):
     impressions: int ## How many impressions have been acquired
     timestep: int ## e.g. day of the adx game
 
-    def __init__(self, bidder, campaign: Campaign, spend=0.0, impressions=None, timestep=0):
+    def __init__(self, bidder, campaign: Campaign, spend=0.0, impressions=0, timestep=0):
         super().__init__(bidder)
         self.campaign = campaign
         self.spend = spend

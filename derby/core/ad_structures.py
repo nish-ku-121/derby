@@ -15,9 +15,8 @@ class Campaign:
     budget: float
     target: AuctionItem ## Which auction item to target
 
-    def __init__(self, uid=None, reach, budget, target):
-        if (uid == None):
-            self.uid = uuid.uuid4().int
+    def __init__(self, reach, budget, target):
+        self.uid = uuid.uuid4().int
         self.reach = reach
         self.budget = budget
         self.target = target
