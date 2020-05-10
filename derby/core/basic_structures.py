@@ -97,15 +97,15 @@ class Bid:
 @dataclass
 class AuctionResults:
     allocations_and_expenditures: Dict[Bid, Dict[AuctionItem, float]]
-    __UNALLOC_KEY: Bid = None
+    _UNALLOC_KEY = None
 
     def __init__(self, allocations_and_expenditures: Dict[Bid, Dict[AuctionItem, float]] = None):
         if allocations_and_expenditures == None:
             self.allocations_and_expenditures = dict()
         else:
             self.allocations_and_expenditures = allocations_and_expenditures
-        # Add an __UNALLOC_KEY to represent any items that go unallocated
-        self.set_result(self.__UNALLOC_KEY)
+        # Add an _UNALLOC_KEY to represent any items that go unallocated
+        self.set_result(type(self)._UNALLOC_KEY)
 
     def set_result(self, bid: Bid, auction_item: AuctionItem = None, expenditure: float = 0.0):
         if not (bid in self.allocations_and_expenditures):
@@ -119,10 +119,10 @@ class AuctionResults:
         return self.allocations_and_expenditures[bid]
 
     def set_unallocated(self, auction_item: AuctionItem):
-        self.set_result(self.__UNALLOC_KEY, auction_item)
+        self.set_result(type(self)._UNALLOC_KEY, auction_item)
 
     def get_unallocated(self):
-        return self.get_result(self.__UNALLOC_KEY)
+        return self.get_result(type(self)._UNALLOC_KEY)
 
     def get_allocations(self, bid: Bid):
         return self.allocations_and_expenditures[bid].keys()
@@ -142,13 +142,13 @@ class AuctionResults:
 
 class AuctionResultsIterator:
     def __init__(self, auction_results):
-        self.__auction_results_bids = list(auction_results.allocations_and_expenditures.keys())
-        self.__auction_results_bids.remove(auction_results.__UNALLOC_KEY)
-        self.__index = 0
+        self._auction_results_bids = list(auction_results.allocations_and_expenditures.keys())
+        self._auction_results_bids.remove(type(auction_results)._UNALLOC_KEY)
+        self._index = 0
 
     def __next__(self):
-        if (self.__index >= len(self.__auction_results_bids)):
+        if (self._index >= len(self._auction_results_bids)):
             raise StopIteration
-        elem = self.__auction_results_bids[self.__index]
-        self.__index += 1
+        elem = self._auction_results_bids[self._index]
+        self._index += 1
         return elem

@@ -9,42 +9,42 @@ T = TypeVar('T')
 
 @dataclass
 class PMF:
-    __pmf: Dict[T, int]
-    __total_weight: int
+    _pmf: Dict[T, int]
+    _total_weight: int
 
     def __init__(self, items_with_weights: Dict[T, int] = None):
-        self.__pmf = dict()
-        self.__total_weight = 0
+        self._pmf = dict()
+        self._total_weight = 0
         if items_with_weights != None:
             self.add_items(items_with_weights)   
 
     def add_items(self, items_with_weights: Dict[T, int], update_existing=False):
         for key in items_with_weights:
             temp_weight = items_with_weights[key]
-            if (not update_existing) and (key in self.__pmf):
+            if (not update_existing) and (key in self._pmf):
                 raise KeyError("item {} already exists in PMF!".format(key))
             else:
-                self.__total_weight -= self.__pmf.get(key, 0.0)
-                self.__pmf[key] = temp_weight
-                self.__total_weight += temp_weight
+                self._total_weight -= self._pmf.get(key, 0.0)
+                self._pmf[key] = temp_weight
+                self._total_weight += temp_weight
 
     def delete_item(self, item: T):
-        if item in self.__pmf:
-            temp_weight = self.__pmf[item]
-            del self.__pmf[item]
-            self.__total_weight -= temp_weight
+        if item in self._pmf:
+            temp_weight = self._pmf[item]
+            del self._pmf[item]
+            self._total_weight -= temp_weight
 
     def draw_n(self, n: int, replace=True):
         items = []
         probs = []
-        total_weight = float(self.__total_weight)
-        for key in self.__pmf:
+        total_weight = float(self._total_weight)
+        for key in self._pmf:
             items.append(key)
-            probs.append((self.__pmf[key] / total_weight))
+            probs.append((self._pmf[key] / total_weight))
         return np.random.choice(items, n, replace=replace, p=probs)
 
     def get_total_weight(self):
-        return self.__total_weight
+        return self._total_weight
 
 
 class AuctionItemPMF(PMF):
