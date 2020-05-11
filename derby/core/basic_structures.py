@@ -1,4 +1,3 @@
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Set, List, Dict, Any
 import uuid
@@ -24,14 +23,19 @@ class AuctionItem:
         return isinstance(other, self.__class__) and self.item_id == other.item_id
 
     def __hash__(self):
-        return hash(self.item_id)
+        return hash(self.__class__.__name__ + str(self.item_id))
 
     def __repr__(self):
         return "{}(item_id: {}, name: {})".format(self.__class__.__name__, self.item_id, self.name)
 
     def copy(self):
-        c = AuctionItem(self.name, self.item_type, self.owner)
+        c = AuctionItem(self.name, self.item_type, None)
         return c
+
+    @staticmethod
+    def is_copy(item1, item2):
+        return (item1.__class__ == item2.__class__) and (item1.name == item2.name and 
+                                                         item1.item_type == item2.item_type)
 
     def item_type_submatches(self, auction_item):
         return self.item_type <= auction_item.item_type
@@ -81,7 +85,7 @@ class Bid:
         return isinstance(other, self.__class__) and self.uid == other.uid
 
     def __hash__(self):
-        return hash(self.uid)
+        return hash(self.__class__.__name__ + str(self.uid))
 
     def __repr__(self):
         return "{}(uid: {}, bidder: {}, auction_item: {})".format(self.__class__.__name__, self.uid, self.bidder, self.auction_item.item_id)
@@ -93,15 +97,15 @@ class Bid:
 @dataclass
 class AuctionResults:
     allocations_and_expenditures: Dict[Bid, Dict[AuctionItem, float]]
-    __UNALLOC_KEY: Bid = None
+    _UNALLOC_KEY = None
 
     def __init__(self, allocations_and_expenditures: Dict[Bid, Dict[AuctionItem, float]] = None):
         if allocations_and_expenditures == None:
             self.allocations_and_expenditures = dict()
         else:
             self.allocations_and_expenditures = allocations_and_expenditures
-        # Add an __UNALLOC_KEY to represent any items that go unallocated
-        self.set_result(self.__UNALLOC_KEY)
+        # Add an _UNALLOC_KEY to represent any items that go unallocated
+        self.set_result(type(self)._UNALLOC_KEY)
 
     def set_result(self, bid: Bid, auction_item: AuctionItem = None, expenditure: float = 0.0):
         if not (bid in self.allocations_and_expenditures):
@@ -115,10 +119,10 @@ class AuctionResults:
         return self.allocations_and_expenditures[bid]
 
     def set_unallocated(self, auction_item: AuctionItem):
-        self.set_result(self.__UNALLOC_KEY, auction_item)
+        self.set_result(type(self)._UNALLOC_KEY, auction_item)
 
     def get_unallocated(self):
-        return self.get_result(self.__UNALLOC_KEY)
+        return self.get_result(type(self)._UNALLOC_KEY)
 
     def get_allocations(self, bid: Bid):
         return self.allocations_and_expenditures[bid].keys()
@@ -131,3 +135,20 @@ class AuctionResults:
 
     def get_total_expenditure(self, bid: Bid):
         return sum(self.get_expenditures(bid))
+
+    def __iter__(self):
+        return AuctionResultsIterator(self)
+
+
+class AuctionResultsIterator:
+    def __init__(self, auction_results):
+        self._auction_results_bids = list(auction_results.allocations_and_expenditures.keys())
+        self._auction_results_bids.remove(type(auction_results)._UNALLOC_KEY)
+        self._index = 0
+
+    def __next__(self):
+        if (self._index >= len(self._auction_results_bids)):
+            raise StopIteration
+        elem = self._auction_results_bids[self._index]
+        self._index += 1
+        return elem
