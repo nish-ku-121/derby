@@ -5,21 +5,32 @@ from derby.core.basic_structures import AuctionItem
 
 
 
-@dataclass
 class Campaign:
     """
     Represents a campaign
     """
     uid: int
-    reach: int
-    budget: float
-    target: AuctionItem ## Which auction item to target
+    _reach: int
+    _budget: float
+    _target: AuctionItem ## Which auction item to target
 
     def __init__(self, reach, budget, target):
         self.uid = uuid.uuid4().int
-        self.reach = reach
-        self.budget = budget
-        self.target = target
+        self._reach = reach
+        self._budget = budget
+        self._target = target
+
+    @property
+    def reach(self):
+        return self._reach
+
+    @property
+    def budget(self):
+        return self._budget
+
+    @property
+    def target(self):
+        return self._target
 
     def __repr__(self):
         return "{}(uid: {}, reach: {}, budget: {}, target: {})".format(self.__class__.__name__,
