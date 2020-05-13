@@ -137,5 +137,5 @@ class KthPriceAuction(AbstractAuction):
         # Get the winning bid's value
         max_bid_value = max([bid.bid_per_item for bid in bids])
         # Get all the bids that are at least as big as the winning bid.
-        winning_bids = list(filter(lambda b: b.bid_per_item >= max_bid_value, bids))    
+        winning_bids = list(filter(lambda b: b.bid_per_item >= max_bid_value, bids))
         return winning_bids

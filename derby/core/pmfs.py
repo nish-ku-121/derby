@@ -16,7 +16,10 @@ class PMF:
         self._pmf = dict()
         self._total_weight = 0
         if items_with_weights != None:
-            self.add_items(items_with_weights)   
+            self.add_items(items_with_weights)
+
+    def items(self):
+        return self._pmf.keys()
 
     def add_items(self, items_with_weights: Dict[T, int], update_existing=False):
         for key in items_with_weights:

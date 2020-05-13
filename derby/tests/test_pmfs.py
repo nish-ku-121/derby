@@ -1,5 +1,5 @@
 import unittest
-from derby.core.pmf import PMF, AuctionItemPMF
+from derby.core.pmfs import PMF, AuctionItemPMF
 from derby.core.basic_structures import AuctionItem
 
 

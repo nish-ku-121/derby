@@ -1,7 +1,7 @@
 import unittest
 from derby.core.basic_structures import AuctionItem, Bid, AuctionResults
 from derby.core.auctions import KthPriceAuction
-from derby.core.pmf import PMF, AuctionItemPMF
+from derby.core.pmfs import PMF, AuctionItemPMF
 from derby.core.ad_structures import Campaign
 from derby.core.states import CampaignBidderState
 from derby.core.markets import OneCampaignMarket

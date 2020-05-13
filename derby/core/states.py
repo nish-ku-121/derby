@@ -40,3 +40,9 @@ class CampaignBidderState(BidderState):
         self.spend = spend
         self.impressions = impressions
         self.timestep = timestep
+
+    def __repr__(self):
+        return "{}(target: {}, budget: {}, reach: {}, spend: {}, impressions: {})".format(self.__class__.__name__, 
+                                                                              self.campaign.target, self.campaign.budget, 
+                                                                              self.campaign.reach, self.spend, 
+                                                                              self.impressions)

@@ -22,7 +22,9 @@ class Campaign:
         self.target = target
 
     def __repr__(self):
-        return "(" + str(self.uid) + ", " + str(self.target) + ", " + str(self.reach) + ", " + str(self.budget) + ", " + str(self.budget / self.reach) + ")"
+        return "{}(uid: {}, reach: {}, budget: {}, target: {})".format(self.__class__.__name__,
+                                                                       self.uid, self.reach, 
+                                                                       self.budget, self.target)
 
     def __lt__(self, other):
         return (self.budget / self.reach) <= (other.budget / other.reach)
