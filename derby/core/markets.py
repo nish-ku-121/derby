@@ -4,7 +4,7 @@ from random import choice
 from typing import Set, List, Dict, Any, TypeVar, Iterable
 import uuid
 from derby.core.basic_structures import AuctionItem, Bid, AuctionResults
-from derby.core.pmf import AuctionItemPMF
+from derby.core.pmfs import AuctionItemPMF
 from derby.core.auctions import AbstractAuction
 from derby.core.states import BidderState, CampaignBidderState
 
@@ -15,14 +15,14 @@ T = TypeVar('T')
 class AbstractMarket(ABC):
     auction: AbstractAuction
     _bidder_states_by_bidder: Dict[T, BidderState]
-    auction_items_pmf: AuctionItemPMF
+    auction_item_pmf: AuctionItemPMF
     _auction_items: List[AuctionItem]
     timestep: int
 
-    def __init__(self, auction: AbstractAuction, bidder_states: Iterable[BidderState], auction_items_pmf: AuctionItemPMF, timestep: int = 0):
+    def __init__(self, auction: AbstractAuction, bidder_states: Iterable[BidderState], auction_item_pmf: AuctionItemPMF, timestep: int = 0):
         super().__init__()
         self.auction = auction
-        self.auction_items_pmf = auction_items_pmf
+        self.auction_item_pmf = auction_item_pmf
         self._auction_items = []
         self.timestep = timestep
         self._bidder_states_by_bidder = {}
@@ -62,28 +62,30 @@ class AbstractMarket(ABC):
 class OneCampaignMarket(AbstractMarket):
     num_of_items_per_timestep: int
 
-    def __init__(self, auction: AbstractAuction, bidder_states: Iterable[CampaignBidderState], auction_items_pmf: AuctionItemPMF, timestep: int = 0, num_of_items_per_timestep: int = 1):
-        super().__init__(auction, bidder_states, auction_items_pmf, timestep)
+    def __init__(self, auction: AbstractAuction, bidder_states: Iterable[CampaignBidderState], 
+                    auction_item_pmf: AuctionItemPMF, timestep: int = 0, 
+                    num_of_items_per_timestep: int = 1):
+        super().__init__(auction, bidder_states, auction_item_pmf, timestep)
         self.num_of_items_per_timestep = num_of_items_per_timestep
 
     def run_auction(self, bids, items_to_bids_mapping_func=None):
         return super().run_auction(bids, items_to_bids_mapping_func)
 
     def update_auction_items(self):
-        self._auction_items = self.auction_items_pmf.draw_n(self.num_of_items_per_timestep, replace=True)
+        self._auction_items = self.auction_item_pmf.draw_n(self.num_of_items_per_timestep, replace=True)
 
     def update_bidder_states(self, auction_results: AuctionResults):
         for bid in auction_results:
             bidder = bid.bidder
             if (bidder != None):
-                bstate = self.get_bidder_state(bidder)
+                cbstate = self.get_bidder_state(bidder)
                 allocs = auction_results.get_allocations(bid)
                 expenditure = auction_results.get_total_expenditure(bid)
-                bstate.spend += expenditure
-                bstate.impressions += len(allocs)
+                cbstate.spend += expenditure
+                cbstate.impressions += len(list(filter(lambda item: cbstate.campaign.target.item_type_submatches(item), allocs)))
 
     def update_timestep(self):
         self.timestep += 1
         bidder_states = self.get_bidder_state()
-        for bstate in bidder_states:
-            bstate.timestep = self.timestep
+        for cbstate in bidder_states:
+            cbstate.timestep = self.timestep
