@@ -12,8 +12,8 @@ class TestOneCampaignNDaysEnv(unittest.TestCase):
 
     def setUp(self):
         self.auction_items = [
-                        AuctionItem(name="male1", item_type={"male"}, owner=None),
-                        AuctionItem(name="female1", item_type={"female"}, owner=None)
+                        AuctionItem(name="male", item_type={"male"}, owner=None),
+                        AuctionItem(name="female", item_type={"female"}, owner=None)
         ]
         self.campaigns = [
                         Campaign(10, 100, self.auction_items[0]),
@@ -44,8 +44,8 @@ class TestOneCampaignNDaysEnv(unittest.TestCase):
                                     campaign_pmf, auction_item_pmf)
 
         max_horizon_length = 100
-        num_of_trajs = 2
-        num_of_days = 5
+        num_of_trajs = 2 # number of times to train
+        num_of_days = 5 # how long the game lasts
         agents = ["agent1", "agent2"]
         env.init(agents, num_of_days)
         for i in range(num_of_trajs):

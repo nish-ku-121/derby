@@ -142,6 +142,7 @@ class OneCampaignNDaysEnv(CampaignEnv):
             results = self._market.run_auction(flatten_2d(bids), items_to_bids_mapping_func=self._auction.items_to_bids_by_item_type_submatch)
             self.done = (self._num_of_days != None) and (self._market.timestep == self._num_of_days)
             
+            # Calculate each agent's reward
             for i in range(len(self._agents)):
                 agent = self._agents[i]
                 agent_bids = bids[i]
@@ -151,8 +152,8 @@ class OneCampaignNDaysEnv(CampaignEnv):
                 agent_reward = -1 * agent_expenditure # i.e. negative reward
                 if self.done:
                     # TODO: replace with actual formula
-                    # TODO: what happens / what to do if agent gets more impressions than reach?
-                    agent_reward += (cbstate.impressions / (1.0 * cbstate.campaign.reach)) * cbstate.campaign.budget
+                    agent_reward += min(cbstate.campaign.budget, 
+                                        (cbstate.impressions / (1.0 * cbstate.campaign.reach)) * cbstate.campaign.budget)
                 rewards.append(agent_reward)
         
         # numpy array of shape [m, s]
