@@ -61,9 +61,9 @@ class MarketEnv(AbstractEnvironment):
             # actions[i] is agent i's bids and actions[i][j] is the jth bid of agent i.
             return actions
         bids = []
-        for i in range(actions.shape[0]):
+        for i in range(len(actions)):
             agent_i_bids = []
-            for j in range(actions.shape[1]):
+            for j in range(len(actions[i])):
                 bid_j_of_agent_i = actions[i][j]
                 bidder = agents[i]
                 auction_item_spec_id = bid_j_of_agent_i[0]

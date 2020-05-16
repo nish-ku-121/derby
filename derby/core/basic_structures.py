@@ -121,6 +121,9 @@ class Bid:
         total_limit = bid_vec[2]
         return cls(bidder, auction_item_spec, bid_per_item, total_limit)
 
+    def to_vector(self):
+        return [self.auction_item_spec.uid, self.bid_per_item, self.total_limit]
+
 
 class AuctionResults:
     allocations_and_expenditures: Dict[Bid, Dict[AuctionItem, float]]

@@ -60,21 +60,7 @@ class TestOneCampaignNDaysEnv(unittest.TestCase):
             print()
 #
             for j in range(max_horizon_length):
-                if env.vectorize:
-                    actions = np.array([
-                        # agent1 bids
-                        [
-                            #Bid("agent1", auction_item_specs[0], bid_per_item=1.0, total_limit=1.0)
-                            [auction_item_specs[0].uid, 1.0, 1.0]
-                        ],
-                        # agent2 bids
-                        [
-                            #Bid("agent2", auction_item_specs[1], bid_per_item=2.0, total_limit=2.0)
-                            [auction_item_specs[1].uid, 2.0, 2.0]
-                        ]
-                    ])
-                else:
-                    actions = np.array([
+                actions = [
                         # agent1 bids
                         [
                             Bid("agent1", auction_item_specs[0], bid_per_item=1.0, total_limit=1.0)
@@ -83,7 +69,12 @@ class TestOneCampaignNDaysEnv(unittest.TestCase):
                         [
                             Bid("agent2", auction_item_specs[1], bid_per_item=2.0, total_limit=2.0)
                         ]
-                ])
+                ]
+                if env.vectorize:
+                    for i in range(len(actions)):
+                        for j in range(len(actions[i])):
+                            actions[i][j] = actions[i][j].to_vector()
+                    
                 agent_states, rewards, done = env.step(actions)
 # DEBUG
                 print(agent_states)
