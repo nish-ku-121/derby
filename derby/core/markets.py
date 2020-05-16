@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from random import choice
 from typing import Set, List, Dict, Any, TypeVar, Iterable
-import uuid
 from derby.core.basic_structures import AuctionItemSpecification, AuctionItem, Bid, AuctionResults
 from derby.core.pmfs import PMF
 from derby.core.auctions import AbstractAuction

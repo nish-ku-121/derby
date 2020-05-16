@@ -1,15 +1,17 @@
 from typing import Set, List, Dict, Any
-import uuid
+import itertools
 
 
 
 class AuctionItemSpecification:
+    _uid_generator = itertools.count(1)
+
     uid: int
     _name: str
     _item_type: Set[str]
 
     def __init__(self, name: str = None, item_type: Set[str] = {}):
-        self.uid = uuid.uuid4().int
+        self.uid = next(type(self)._uid_generator)
         self._name = name
         self._item_type = item_type
 
@@ -56,12 +58,14 @@ class AuctionItemSpecification:
 
 
 class AuctionItem:
+    _uid_generator = itertools.count(1)
+
     uid: int
     owner: 'typing.Any'
     auction_item_spec: AuctionItemSpecification
 
     def __init__(self, auction_item_spec: AuctionItemSpecification, owner=None):
-        self.uid = uuid.uuid4().int
+        self.uid = next(type(self)._uid_generator)
         self.owner = owner
         self.auction_item_spec = auction_item_spec
 
@@ -77,6 +81,8 @@ class AuctionItem:
 
 
 class Bid:
+    _uid_generator = itertools.count(1)
+    
     uid: int
     bidder: 'typing.Any'
     auction_item_spec: AuctionItemSpecification
@@ -85,7 +91,7 @@ class Bid:
 
     def __init__(self, bidder, auction_item_spec: AuctionItemSpecification, 
                        bid_per_item: float = 0.0, total_limit: float = 0.0):
-        self.uid = uuid.uuid4().int
+        self.uid = next(type(self)._uid_generator)
         self.bidder = bidder
         self.auction_item_spec = auction_item_spec
         self.bid_per_item = bid_per_item

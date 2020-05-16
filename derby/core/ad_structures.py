@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Set, List, Dict, OrderedDict
-import uuid
+import itertools
 from derby.core.basic_structures import AuctionItemSpecification
 
 
@@ -9,13 +9,15 @@ class Campaign:
     """
     Represents a campaign
     """
+    _uid_generator = itertools.count(1)
+    
     uid: int
     _reach: int
     _budget: float
     _target: AuctionItemSpecification # What kind of auction items to target
 
     def __init__(self, reach, budget, target):
-        self.uid = uuid.uuid4().int
+        self.uid = next(type(self)._uid_generator)
         self._reach = reach
         self._budget = budget
         self._target = target

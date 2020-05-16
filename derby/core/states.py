@@ -2,16 +2,18 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from random import choice
 from typing import Set, List, Dict, OrderedDict
-import uuid
+import itertools
 from derby.core.ad_structures import Campaign
 
 
 
 class State(ABC):
+    _uid_generator = itertools.count(1)
+
     uid: int
 
     def __init__(self):
-        self.uid = uuid.uuid4().int
+        self.uid = next(type(self)._uid_generator)
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.uid == other.uid
@@ -25,6 +27,8 @@ class State(ABC):
 
 
 class BidderState(State):
+    _uid_generator = itertools.count(1)
+
     bidder: 'typing.Any'
 
     def __init__(self, bidder):
@@ -36,6 +40,8 @@ class BidderState(State):
 
 
 class CampaignBidderState(BidderState):
+    _uid_generator = itertools.count(1)
+
     campaign: Campaign
     spend: float # How much has been spent so far on the campaign (e.g. via bids won)
     impressions: int # How many impressions have been acquired
