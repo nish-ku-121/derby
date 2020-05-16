@@ -38,6 +38,7 @@ class TestOneCampaignNDaysEnv(unittest.TestCase):
 # DEBUG
         for c in campaigns:
             print(c)
+        print()
 #
 
         num_items_per_timestep_min = 1000
@@ -53,7 +54,7 @@ class TestOneCampaignNDaysEnv(unittest.TestCase):
         env.vectorize = True
         env.init(agents, num_of_days)
         for i in range(num_of_trajs):
-            agent_states = env.reset()    
+            agent_states = env.reset()
 # DEBUG
             print("=== Traj {} ===".format(i))
             print(agent_states)

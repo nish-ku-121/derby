@@ -7,7 +7,6 @@ import numpy as np
 
 T = TypeVar('T')
 
-@dataclass
 class PMF:
     _pmf: Dict[T, int]
     _total_weight: int
