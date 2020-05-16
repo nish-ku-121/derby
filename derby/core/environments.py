@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Set, List, Dict, Any, TypeVar, Iterable
 import numpy as np
-from derby.core.basic_structures import Bid
-from derby.core.pmfs import PMF, AuctionItemPMF
+from derby.core.basic_structures import AuctionItemSpecification, AuctionItem, Bid
+from derby.core.pmfs import PMF
 from derby.core.auctions import AbstractAuction
 from derby.core.ad_structures import Campaign
 from derby.core.states import CampaignBidderState
@@ -40,14 +40,14 @@ class CampaignEnv(AbstractEnvironment):
     def step(self, actions):
         pass
 
-    def convert_from_actions_tensor(self, actions):
+    def convert_from_actions_tensor(self, actions, agents, auction_item_specs_by_id):
         '''
         Assume actions is a numpy array of shape [m, n, k]
         where:
             m = # of agents
             n = # of bids (per agent)
             k = # of fields of a bid vector
-        Assuming bid vector is: [auction_item_id, bid_per_item, total_limit].
+        Assuming bid vector is: [auction_item_spec_id, bid_per_item, total_limit].
         Assuming first dimension is in the same order as the agents list passed to init.
         output: 2D list of bid objects. bids[i] are agent i's bids, 
                 bids[i][j] is the jth bid of agent i.
@@ -57,12 +57,12 @@ class CampaignEnv(AbstractEnvironment):
             agent_i_bids = []
             for j in range(actions.shape[1]):
                 bid_j_of_agent_i = actions[i][j]
-                auction_item_id = bid_j_of_agent_i[0]
+                auction_item_spec_id = bid_j_of_agent_i[0]
                 bid_per_item = bid_j_of_agent_i[1]
                 total_limit = bid_j_of_agent_i[2]
-                bidder = self._agents[i]
-                auction_item = self._auction_items_by_id[auction_item_id]
-                agent_i_bids.append(Bid(bidder, auction_item, bid_per_item, total_limit))
+                bidder = agents[i]
+                auction_item_spec = auction_item_specs_by_id[auction_item_spec_id]
+                agent_i_bids.append(Bid(bidder, auction_item_spec, bid_per_item, total_limit))
             bids.append(agent_i_bids)
         return bids
 
@@ -79,7 +79,7 @@ class CampaignEnv(AbstractEnvironment):
         states_tensor = []
         for cbstate in states:
             vec = [
-                    cbstate.campaign.reach, cbstate.campaign.budget, cbstate.campaign.target.item_id,
+                    cbstate.campaign.reach, cbstate.campaign.budget, cbstate.campaign.target.uid,
                     cbstate.spend, cbstate.impressions, cbstate.timestep
                 ]
             states_tensor.append(vec)
@@ -88,33 +88,32 @@ class CampaignEnv(AbstractEnvironment):
 
 class OneCampaignNDaysEnv(CampaignEnv):
 
-    def __init__(self, auction: AbstractAuction, num_items_per_timestep_min: int, num_items_per_timestep_max: int , 
-                       campaign_pmf: PMF, auction_item_pmf: AuctionItemPMF):
+    def __init__(self, auction: AbstractAuction, auction_item_spec_pmf: PMF, campaign_pmf: PMF,
+                 num_items_per_timestep_min: int, num_items_per_timestep_max: int):
         self._auction = auction
         self._campaign_pmf = campaign_pmf
         # let this be half-open, i.e. [num_items_per_timestep_min, num_items_per_timestep_max)
         self._num_items_per_timestep_range = (num_items_per_timestep_min, num_items_per_timestep_max)
-        self._auction_item_pmf = auction_item_pmf
-        self._auction_items_by_id = { item.item_id : item for item in self._auction_item_pmf.items() }
+        self._auction_item_spec_pmf = auction_item_spec_pmf
+        self._auction_item_specs_by_id = { spec.uid : spec for spec in self._auction_item_spec_pmf.items() }
         self.done = False
         self._agents = None
-        self._bidder_states_by_agent = None
         self._market = None
 
     def init(self, agents, horizon=None):
         self._agents = tuple(agents)
-        self._bidder_states_by_agent = { agent : None for agent in agents }
         self._num_of_days = horizon
 
     def reset(self):
         self.done = False
         bidder_states = []
-        for agent in self._agents:
-            camp = self._campaign_pmf.draw_n(1)[0]
+        camps = self._campaign_pmf.draw_n(len(self._agents))
+        for i in range(len(self._agents)):
+            agent = self._agents[i]
+            camp = camps[i]
             cbstate = CampaignBidderState(agent, camp)
             bidder_states.append(cbstate)
-            self._bidder_states_by_agent[agent] = cbstate
-        self._market = OneCampaignMarket(self._auction, bidder_states, self._auction_item_pmf)
+        self._market = OneCampaignMarket(self._auction, bidder_states, self._auction_item_spec_pmf)
         bidder_states = self.convert_to_states_tensor(bidder_states)
         return bidder_states
 
@@ -130,23 +129,24 @@ class OneCampaignNDaysEnv(CampaignEnv):
         if not self.done:
             # Convert to a 2D list of bid objects, where 
             # bids[i] is agent i's bids and bids[i][j] is the jth bid of agent i.
-            bids = self.convert_from_actions_tensor(actions)        
+            bids = self.convert_from_actions_tensor(actions, self._agents, self._auction_item_specs_by_id)        
             
             # Randomize the number of auction items available (i.e. users who show up) in this step
-            pre_step_agent_spends = [ self._bidder_states_by_agent[agent].spend for agent in self._agents ]
+            pre_step_agent_spends = [ self._market.get_bidder_state(agent).spend for agent in self._agents ]
             num_items_min = self._num_items_per_timestep_range[0]
             num_items_max = self._num_items_per_timestep_range[1]
             self._market.num_of_items_per_timestep = np.random.randint(num_items_min, num_items_max)
 
             # Run the auction
-            results = self._market.run_auction(flatten_2d(bids), items_to_bids_mapping_func=self._auction.items_to_bids_by_item_type_submatch)
+            item_matches_bid_spec_func = lambda item, bid: AuctionItemSpecification.is_a_type_of(item.auction_item_spec, bid.auction_item_spec)
+            results = self._market.run_auction(flatten_2d(bids), item_matches_bid_spec_func)
             self.done = (self._num_of_days != None) and (self._market.timestep == self._num_of_days)
             
             # Calculate each agent's reward
             for i in range(len(self._agents)):
                 agent = self._agents[i]
                 agent_bids = bids[i]
-                cbstate = self._bidder_states_by_agent[agent]
+                cbstate = self._market.get_bidder_state(agent)
                 states.append(cbstate)
                 agent_expenditure = ( cbstate.spend - pre_step_agent_spends[i] ) # alternatively, use agent_bids
                 agent_reward = -1 * agent_expenditure # i.e. negative reward

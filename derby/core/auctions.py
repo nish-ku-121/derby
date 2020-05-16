@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from random import choice
 from typing import Set, List, Dict, OrderedDict
 import uuid
-from derby.core.basic_structures import AuctionItem, Bid, AuctionResults
+from derby.core.basic_structures import AuctionItemSpecification, AuctionItem, Bid, AuctionResults
 from derby.core.utils import kth_largest
 
 
@@ -38,53 +38,21 @@ class AbstractAuction(ABC):
                 raise Exception('bid {} is not owned by any bidder!'.format(bid.uid))
         return list(uniques.values())
 
-    @staticmethod
-    def items_to_bids_by_item(bids, auction_items):
-        bids_by_item = {item: [] for item in auction_items}
-        for bid in bids:
-            bid_item = bid.auction_item
-            if (bid_item != None):
-                if bid_item in bids_by_item:
-                        bids_by_item[bid_item].append(bid)
-        return bids_by_item
 
     @staticmethod
-    def items_to_bids_by_item_type(bids, auction_items):
-        rtn = {item: [] for item in auction_items}
-        
-        items_by_item_type = {}
-        for item in auction_items:
-            if item.item_type != None:
-                temp_key = frozenset(item.item_type)
-            else:
-                temp_key = 'None'
-            if temp_key in items_by_item_type:
-                items_by_item_type[temp_key].append(item)
-            else:
-                items_by_item_type[temp_key] = [item]
-
-        for bid in bids:
-            if (bid.auction_item != None):
-                bid_item_type = bid.auction_item.item_type
-                if (bid_item_type != None):
-                    bid_item_type = frozenset(bid_item_type)
-                else:
-                    bid_item_type = 'None'
-                if bid_item_type in items_by_item_type:
-                    relevant_items = items_by_item_type[bid_item_type]
-                    for item in relevant_items:
-                        rtn[item].append(bid)
-        return rtn
-
-    @staticmethod
-    def items_to_bids_by_item_type_submatch(bids, auction_items):
+    def items_to_bids_filter(bids, auction_items, item_matches_bid_spec_func):
+        '''
+        item_matches_bid_spec_func: 
+            function which takes inputs (item, bid) and outputs True/False
+            if item matches the bid's spec (based on some notion of "match").
+        '''
         rtn = {}
         for item in auction_items:
             if not (item in rtn):
                 rtn[item] = []
             temp_list = rtn[item]
             for bid in bids:
-                if bid.auction_item.item_type_submatches(item):
+                if item_matches_bid_spec_func(item, bid):
                     temp_list.append(bid)
         return rtn
 
@@ -96,19 +64,20 @@ class KthPriceAuction(AbstractAuction):
         super().__init__()
         self.k = k
 
-    def run_auction(self, bids, auction_items, items_to_bids_mapping_func=None) -> AuctionResults:
-        if (items_to_bids_mapping_func == None):
-            items_to_bids_mapping_func = self.items_to_bids_by_item
+    def run_auction(self, bids, auction_items, item_matches_bid_spec_func=None) -> AuctionResults:
+        # Set the default item_matches_bid_spec_func
+        if (item_matches_bid_spec_func == None):
+            item_matches_bid_spec_func = lambda item, bid: AuctionItemSpecification.is_exact_match(item.auction_item_spec, bid.auction_item_spec)
         # Initialize auction results with all bids being allocated nothing
         results = AuctionResults()
         for bid in bids:
             results.set_result(bid)
         # Get relevant bids for each item
-        items_to_bids_mapping = items_to_bids_mapping_func(bids, auction_items)
+        items_to_bids_mapping = type(self).items_to_bids_filter(bids, auction_items, item_matches_bid_spec_func)
         for item in auction_items:
             relevant_bids = items_to_bids_mapping[item]
             # Allow only one bid per bidder
-            relevant_bids = self.dedup_by_bidder(relevant_bids)
+            relevant_bids = type(self).dedup_by_bidder(relevant_bids)
             # If a bid exceeds it's total limit, then ignore it
             relevant_bids = list(filter(lambda b: b.bid_per_item <= b.total_limit, relevant_bids))
             # If there are no bids for the item, then add it as unallocated
@@ -119,7 +88,7 @@ class KthPriceAuction(AbstractAuction):
             # Note the price of the kth largest bid is zero if there is no such bid.
             price = kth_largest([bid.bid_per_item for bid in relevant_bids], self.k, 0.0)
             # Get all the winning bids of the relevant bids.
-            winning_bids = self.get_winning_bids(relevant_bids) 
+            winning_bids = type(self).get_winning_bids(relevant_bids) 
             # Select a random bid among all winning bids,
             # allocate and price the item to the winner,
             # finally deplete the winner's total limit.

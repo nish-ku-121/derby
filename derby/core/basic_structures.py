@@ -1,76 +1,93 @@
-from dataclasses import dataclass
 from typing import Set, List, Dict, Any
 import uuid
 
 
 
-@dataclass
-class AuctionItem:
-    item_id: int # TODO: should this be unique? suppose bidder A gets half of quantity and bidder B gets other half.
-    name: str
-    item_type: Set[str]
-    owner: 'typing.Any'
-    #quantity: int
+class AuctionItemSpecification:
+    uid: int
+    _name: str
+    _item_type: Set[str]
 
-    def __init__(self, name: str = None, item_type: Set[str] = {}, owner=None):
-        self.item_id = uuid.uuid4().int # item_id
-        self.name = name
-        self.item_type = item_type
-        self.owner = owner
-        # self.quantity = quantity
+    def __init__(self, name: str = None, item_type: Set[str] = {}):
+        self.uid = uuid.uuid4().int
+        self._name = name
+        self._item_type = item_type
 
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def item_type(self):
+        return self._item_type
+    
+    
     def __eq__(self, other):
-        return isinstance(other, self.__class__) and self.item_id == other.item_id
+        return isinstance(other, self.__class__) and self.uid == other.uid
 
     def __hash__(self):
-        return hash(self.__class__.__name__ + str(self.item_id))
+        return hash(self.__class__.__name__ + str(self.uid))
 
     def __repr__(self):
-        return "{}(item_id: {}, name: {})".format(self.__class__.__name__, self.item_id, self.name)
-
-    def copy(self):
-        c = AuctionItem(self.name, self.item_type, None)
-        return c
+        return "{}(uid: {}, name: {}, item_type: {})".format(self.__class__.__name__, 
+                                                             self.uid, self.name, self.item_type)
 
     @staticmethod
-    def is_copy(item1, item2):
-        return (item1.__class__ == item2.__class__) and (item1.name == item2.name and 
-                                                         item1.item_type == item2.item_type)
-
-    def item_type_submatches(self, auction_item):
-        return self.item_type <= auction_item.item_type
-    '''
-    @staticmethod
-    def split_quantity(auction_item:AuctionItem, orig_item_new_quantity: int, copy_item_new_quantity: int):
-        c = auction_item.copy()
-        auction_item.quantity = orig_item_new_quantity
-        c.quantity = copy_item_new_quantity
-        return c
-
-    @staticmethod
-    def combine_quantity(auction_item_1:AuctionItem, auction_item_2:AuctionItem, in_place=False):
-        if in_place:
-            c = auction_item_1
-            auction_item_1.quantity += auction_item_2.quantity
-            auction_item_2.quantity = 0
+    def is_exact_match(spec, other):
+        if spec != None and other != None:
+            return spec._name == other._name and spec._item_type == other._item_type
         else:
-            c = auction_item_1.copy()
-            c.quantity = auction_item_1.quantity + auction_item_2.quantity
-        return c
-    '''
+            return spec == other # True only if both are None
 
-@dataclass
+    @staticmethod
+    def is_item_type_match(spec, other):
+        if spec != None and other != None:
+            return spec._item_type == other._item_type
+        else:
+            return spec == other # True only if both are None
+
+    @staticmethod
+    def is_a_type_of(spec, other):
+        # e.g. {male, young} is a type of {male} <=> {male, young} >= {male}
+        if spec != None and other != None:
+            return spec._item_type >= other._item_type
+        else:
+            return spec == other # True only if both are None
+
+
+class AuctionItem:
+    uid: int
+    owner: 'typing.Any'
+    auction_item_spec: AuctionItemSpecification
+
+    def __init__(self, auction_item_spec: AuctionItemSpecification, owner=None):
+        self.uid = uuid.uuid4().int
+        self.owner = owner
+        self.auction_item_spec = auction_item_spec
+
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.uid == other.uid
+
+    def __hash__(self):
+        return hash(self.__class__.__name__ + str(self.uid))
+
+    def __repr__(self):
+        return "{}(uid: {}, owner: {}, auction_item_spec: {})".format(self.__class__.__name__, 
+                                                         self.uid, self.owner, self.auction_item_spec.uid)
+
+
 class Bid:
     uid: int
     bidder: 'typing.Any'
-    auction_item: AuctionItem # Doesn't have to be a fully-specified AuctionItem, e.g. can contain only item_type
+    auction_item_spec: AuctionItemSpecification
     bid_per_item: float
     total_limit: float # same units as bid_per_item (e.g. dollars)
 
-    def __init__(self, bidder, auction_item: AuctionItem, bid_per_item: float = 0.0, total_limit: float = 0.0):
+    def __init__(self, bidder, auction_item_spec: AuctionItemSpecification, 
+                       bid_per_item: float = 0.0, total_limit: float = 0.0):
         self.uid = uuid.uuid4().int
         self.bidder = bidder
-        self.auction_item = auction_item
+        self.auction_item_spec = auction_item_spec
         self.bid_per_item = bid_per_item
         self.total_limit = total_limit
         
@@ -88,13 +105,14 @@ class Bid:
         return hash(self.__class__.__name__ + str(self.uid))
 
     def __repr__(self):
-        return "{}(uid: {}, bidder: {}, auction_item: {})".format(self.__class__.__name__, self.uid, self.bidder, self.auction_item.item_id)
+        return "{}(uid: {}, bidder: {}, auction_item_spec: {})".format(self.__class__.__name__, 
+                                                                       self.uid, self.bidder, 
+                                                                       self.auction_item_spec.uid)
 
     def deduct_limit(self, price: float):
         self.total_limit -= price
 
 
-@dataclass
 class AuctionResults:
     allocations_and_expenditures: Dict[Bid, Dict[AuctionItem, float]]
     _UNALLOC_KEY = None

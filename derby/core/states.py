@@ -30,9 +30,9 @@ class BidderState(State):
 
 class CampaignBidderState(BidderState):
     campaign: Campaign
-    spend: float ## How much has been spent so far on the campaign (e.g. via bids won)
-    impressions: int ## How many impressions have been acquired
-    timestep: int ## e.g. day of the adx game
+    spend: float # How much has been spent so far on the campaign (e.g. via bids won)
+    impressions: int # How many impressions have been acquired
+    timestep: int # e.g. day of the adx game
 
     def __init__(self, bidder, campaign: Campaign, spend=0.0, impressions=0, timestep=0):
         super().__init__(bidder)
@@ -42,7 +42,8 @@ class CampaignBidderState(BidderState):
         self.timestep = timestep
 
     def __repr__(self):
-        return "{}(target: {}, budget: {}, reach: {}, spend: {}, impressions: {})".format(self.__class__.__name__, 
-                                                                              self.campaign.target, self.campaign.budget, 
-                                                                              self.campaign.reach, self.spend, 
-                                                                              self.impressions)
+        return "{}(campaign: {}, spend: {}, impressions: {}, timestep: {})".format(
+                                                                            self.__class__.__name__, 
+                                                                            self.campaign, self.spend, 
+                                                                            self.impressions, self.timestep
+                                                                        )

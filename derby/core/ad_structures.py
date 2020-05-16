@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Set, List, Dict, OrderedDict
 import uuid
-from derby.core.basic_structures import AuctionItem
+from derby.core.basic_structures import AuctionItemSpecification
 
 
 
@@ -12,7 +12,7 @@ class Campaign:
     uid: int
     _reach: int
     _budget: float
-    _target: AuctionItem ## Which auction item to target
+    _target: AuctionItemSpecification # What kind of auction items to target
 
     def __init__(self, reach, budget, target):
         self.uid = uuid.uuid4().int

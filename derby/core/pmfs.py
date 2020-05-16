@@ -48,15 +48,3 @@ class PMF:
 
     def get_total_weight(self):
         return self._total_weight
-
-
-class AuctionItemPMF(PMF):
-
-    def draw_n(self, n: int, replace=True):
-        rtn = []
-        items = super().draw_n(n, replace)
-        for item in items:
-            if (not isinstance(item, AuctionItem)):
-                raise Exception("item {} in AuctionItemPMF is not an AuctionItem!".format(item))
-            rtn.append(item.copy())
-        return rtn
