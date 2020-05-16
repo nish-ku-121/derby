@@ -19,6 +19,10 @@ class State(ABC):
     def __hash__(self):
         return hash(self.__class__.__name__ + str(self.uid))
 
+    @abstractmethod
+    def to_vector(self):
+        return [uid]
+
 
 class BidderState(State):
     bidder: 'typing.Any'
@@ -26,6 +30,9 @@ class BidderState(State):
     def __init__(self, bidder):
         super().__init__()
         self.bidder = bidder
+
+    def to_vector(self):
+        return super().to_vector()
 
 
 class CampaignBidderState(BidderState):
@@ -47,3 +54,10 @@ class CampaignBidderState(BidderState):
                                                                             self.campaign, self.spend, 
                                                                             self.impressions, self.timestep
                                                                         )
+
+    def to_vector(self):
+        vec = [
+                self.campaign.reach, self.campaign.budget, self.campaign.target.uid,
+                self.spend, self.impressions, self.timestep
+            ]
+        return vec

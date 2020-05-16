@@ -5,7 +5,7 @@ from derby.core.basic_structures import AuctionItemSpecification, AuctionItem, B
 from derby.core.pmfs import PMF
 from derby.core.auctions import AbstractAuction
 from derby.core.ad_structures import Campaign
-from derby.core.states import CampaignBidderState
+from derby.core.states import State, CampaignBidderState
 from derby.core.markets import OneCampaignMarket
 from derby.core.utils import flatten_2d
 
@@ -26,7 +26,10 @@ class AbstractEnvironment(ABC):
         pass
 
 
-class CampaignEnv(AbstractEnvironment):
+class MarketEnv(AbstractEnvironment):
+
+    def __init__(self, vectorize=True):
+        self.vectorize = vectorize
 
     @abstractmethod
     def init(self, agents, horizon=None):
@@ -42,6 +45,7 @@ class CampaignEnv(AbstractEnvironment):
 
     def convert_from_actions_tensor(self, actions, agents, auction_item_specs_by_id):
         '''
+        (if self.vectorize is True)
         Assume actions is a numpy array of shape [m, n, k]
         where:
             m = # of agents
@@ -52,53 +56,62 @@ class CampaignEnv(AbstractEnvironment):
         output: 2D list of bid objects. bids[i] are agent i's bids, 
                 bids[i][j] is the jth bid of agent i.
         '''
+        if not self.vectorize:
+            # Assume actions is a 2D list of bid objects, where
+            # actions[i] is agent i's bids and actions[i][j] is the jth bid of agent i.
+            return actions
         bids = []
         for i in range(actions.shape[0]):
             agent_i_bids = []
             for j in range(actions.shape[1]):
                 bid_j_of_agent_i = actions[i][j]
-                auction_item_spec_id = bid_j_of_agent_i[0]
-                bid_per_item = bid_j_of_agent_i[1]
-                total_limit = bid_j_of_agent_i[2]
                 bidder = agents[i]
+                auction_item_spec_id = bid_j_of_agent_i[0]
                 auction_item_spec = auction_item_specs_by_id[auction_item_spec_id]
-                agent_i_bids.append(Bid(bidder, auction_item_spec, bid_per_item, total_limit))
+                bid_obj = Bid.from_vector(bid_j_of_agent_i, bidder, auction_item_spec)
+                agent_i_bids.append(bid_obj)
             bids.append(agent_i_bids)
         return bids
 
-    def convert_to_states_tensor(self, states):
+    def convert_to_states_tensor(self, states: Iterable[State]):
         '''
         Assuming states is of the form:
         [
-            Agent 1 state,
+            state 1,
             ...,
-            Agent m state,
+            state n,
             
         ]
+        (The canonical use of this func is for n = m, where m is 
+         the # of agents)
         '''
+        if not self.vectorize:
+            return states
         states_tensor = []
-        for cbstate in states:
-            vec = [
-                    cbstate.campaign.reach, cbstate.campaign.budget, cbstate.campaign.target.uid,
-                    cbstate.spend, cbstate.impressions, cbstate.timestep
-                ]
+        for state in states:
+            vec = state.to_vector()
             states_tensor.append(vec)
+        # numpy array of shape [n, s]
+        # where:
+        #   n = # of states
+        #   s = # of fields of a state vector
         return np.array(states_tensor)
 
 
-class OneCampaignNDaysEnv(CampaignEnv):
+class OneCampaignNDaysEnv(MarketEnv):
 
     def __init__(self, auction: AbstractAuction, auction_item_spec_pmf: PMF, campaign_pmf: PMF,
-                 num_items_per_timestep_min: int, num_items_per_timestep_max: int):
+                 num_items_per_timestep_min: int, num_items_per_timestep_max: int, vectorize=True):
+        super().__init__(vectorize)
         self._auction = auction
         self._campaign_pmf = campaign_pmf
         # let this be half-open, i.e. [num_items_per_timestep_min, num_items_per_timestep_max)
         self._num_items_per_timestep_range = (num_items_per_timestep_min, num_items_per_timestep_max)
         self._auction_item_spec_pmf = auction_item_spec_pmf
         self._auction_item_specs_by_id = { spec.uid : spec for spec in self._auction_item_spec_pmf.items() }
-        self.done = False
         self._agents = None
         self._market = None
+        self.done = False
 
     def init(self, agents, horizon=None):
         self._agents = tuple(agents)
@@ -119,18 +132,19 @@ class OneCampaignNDaysEnv(CampaignEnv):
 
     def step(self, actions):
         '''
-        Assuming actions input is same as specified 
-        in convert_from_actions_tensor func.
-        output: states (as np array), rewards (as np array), done
+        input: actions
+                (actions same form as in convert_from_actions_tensor func)
+        output: states, rewards (as np array), done 
+                (states as np array if self.vectorize is True)
         '''
         states = []
         rewards = []
         
         if not self.done:
-            # Convert to a 2D list of bid objects, where 
-            # bids[i] is agent i's bids and bids[i][j] is the jth bid of agent i.
-            bids = self.convert_from_actions_tensor(actions, self._agents, self._auction_item_specs_by_id)        
-            
+            # Convert actions to a 2D list of bid objects, where bids[i] is agent i's 
+            # bids and bids[i][j] is the jth bid of agent i.
+            bids = self.convert_from_actions_tensor(actions, self._agents, self._auction_item_specs_by_id)
+
             # Randomize the number of auction items available (i.e. users who show up) in this step
             pre_step_agent_spends = [ self._market.get_bidder_state(agent).spend for agent in self._agents ]
             num_items_min = self._num_items_per_timestep_range[0]
@@ -156,10 +170,6 @@ class OneCampaignNDaysEnv(CampaignEnv):
                                         (cbstate.impressions / (1.0 * cbstate.campaign.reach)) * cbstate.campaign.budget)
                 rewards.append(agent_reward)
         
-        # numpy array of shape [m, s]
-        # where:
-        # m = # of agents
-        # s = # of fields of state vector
         states = self.convert_to_states_tensor(states)
         # numpy array of shape [m, ]
         rewards = np.array(rewards)
