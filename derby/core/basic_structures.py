@@ -112,6 +112,18 @@ class Bid:
     def deduct_limit(self, price: float):
         self.total_limit -= price
 
+    @classmethod
+    def from_vector(cls, bid_vec, bidder, auction_item_spec):
+        '''
+        Assuming bid vector is: [auction_item_spec_id, bid_per_item, total_limit].
+        '''
+        bid_per_item = bid_vec[1]
+        total_limit = bid_vec[2]
+        return cls(bidder, auction_item_spec, bid_per_item, total_limit)
+
+    def to_vector(self):
+        return [self.auction_item_spec.uid, self.bid_per_item, self.total_limit]
+
 
 class AuctionResults:
     allocations_and_expenditures: Dict[Bid, Dict[AuctionItem, float]]

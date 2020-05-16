@@ -49,30 +49,39 @@ class TestOneCampaignNDaysEnv(unittest.TestCase):
         num_of_trajs = 2 # number of times to train
         num_of_days = 5 # how long the game lasts
         agents = ["agent1", "agent2"]
+
+        env.vectorize = True
         env.init(agents, num_of_days)
         for i in range(num_of_trajs):
+            agent_states = env.reset()    
+# DEBUG
             print("=== Traj {} ===".format(i))
-            agent_states = env.reset()
             print(agent_states)
             print()
+#
             for j in range(max_horizon_length):
-                actions = np.array([
-                    # agent1 bids
-                    [
-                        #Bid("agent1", auction_item_specs[0], bid_per_item=1.0, total_limit=1.0)
-                        [auction_item_specs[0].uid, 1.0, 1.0]
-                    ],
-                    # agent2 bids
-                    [
-                        #Bid("agent2", auction_item_specs[1], bid_per_item=2.0, total_limit=2.0)
-                        [auction_item_specs[1].uid, 2.0, 2.0]
-                    ]
-                ])
+                actions = [
+                        # agent1 bids
+                        [
+                            Bid("agent1", auction_item_specs[0], bid_per_item=1.0, total_limit=1.0)
+                        ],
+                        # agent2 bids
+                        [
+                            Bid("agent2", auction_item_specs[1], bid_per_item=2.0, total_limit=2.0)
+                        ]
+                ]
+                if env.vectorize:
+                    for i in range(len(actions)):
+                        for j in range(len(actions[i])):
+                            actions[i][j] = actions[i][j].to_vector()
+                    
                 agent_states, rewards, done = env.step(actions)
+# DEBUG
                 print(agent_states)
                 print(rewards)
                 print(done)
                 print()
+#
                 if done:
                     break
         
