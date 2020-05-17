@@ -4,7 +4,7 @@ from derby.core.auctions import KthPriceAuction
 from derby.core.pmfs import PMF
 from derby.core.ad_structures import Campaign
 from derby.core.states import CampaignBidderState
-from derby.core.markets import OneCampaignMarket, SequentialAuction
+from derby.core.markets import OneCampaignMarket, SequentialAuctionMarket
 
 
 
@@ -236,7 +236,7 @@ class TestOneCampaignMarket(unittest.TestCase):
       self.assertEqual(bidder_states[1].timestep, 1*horizon)
 
 
-class TestSequentialAuction(unittest.TestCase):
+class TestSequentialAuctionMarket(unittest.TestCase):
 
     def setUp(self):
         self.auction_item_specs = [
@@ -268,7 +268,7 @@ class TestSequentialAuction(unittest.TestCase):
         ]
         item_satisfies_campaign_func = lambda item, campaign: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, campaign.target)
         item_matches_bid_spec_func = lambda item, bid: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, bid.auction_item_spec)
-        market = SequentialAuction(auction, bidder_states, auction_items, 
+        market = SequentialAuctionMarket(auction, bidder_states, auction_items, 
                                    item_satisfies_campaign_func=item_satisfies_campaign_func, 
                                    num_of_items_per_timestep=1)
         
@@ -313,7 +313,7 @@ class TestSequentialAuction(unittest.TestCase):
         item_satisfies_campaign_func = lambda item, campaign: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, campaign.target)
         item_matches_bid_spec_func = lambda item, bid: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, bid.auction_item_spec)
         num_of_items_per_timestep = 1
-        market = SequentialAuction(auction, bidder_states, auction_items, 
+        market = SequentialAuctionMarket(auction, bidder_states, auction_items, 
                                    item_satisfies_campaign_func=item_satisfies_campaign_func, 
                                    num_of_items_per_timestep=num_of_items_per_timestep)
         
@@ -358,7 +358,7 @@ class TestSequentialAuction(unittest.TestCase):
         item_satisfies_campaign_func = lambda item, campaign: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, campaign.target)
         item_matches_bid_spec_func = lambda item, bid: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, bid.auction_item_spec)
         num_of_items_per_timestep = 2
-        market = SequentialAuction(auction, bidder_states, auction_items, 
+        market = SequentialAuctionMarket(auction, bidder_states, auction_items, 
                                    item_satisfies_campaign_func=item_satisfies_campaign_func, 
                                    num_of_items_per_timestep=num_of_items_per_timestep)
         

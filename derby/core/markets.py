@@ -99,7 +99,7 @@ class OneCampaignMarket(AbstractMarket):
             cbstate.timestep = self.timestep
 
 
-class SequentialAuction(AbstractMarket):
+class SequentialAuctionMarket(AbstractMarket):
     _all_auction_items: List[AuctionItem]
     _all_auction_items_index: int
     _item_satisfies_campaign_func: Callable
