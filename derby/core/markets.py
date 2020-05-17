@@ -1,7 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from random import choice
-from typing import Set, List, Dict, Any, TypeVar, Iterable
+from typing import Set, List, Dict, Any, TypeVar, Iterable, Callable
 from derby.core.basic_structures import AuctionItemSpecification, AuctionItem, Bid, AuctionResults
 from derby.core.pmfs import PMF
 from derby.core.auctions import AbstractAuction
@@ -92,6 +90,54 @@ class OneCampaignMarket(AbstractMarket):
                 cbstate.spend += expenditure
                 cbstate.impressions += len(list(filter(
                         lambda item: AuctionItemSpecification.is_a_type_of(item.auction_item_spec, cbstate.campaign.target), 
+                        allocs)))
+
+    def update_timestep(self):
+        self.timestep += 1
+        bidder_states = self.get_bidder_state()
+        for cbstate in bidder_states:
+            cbstate.timestep = self.timestep
+
+
+class SequentialAuction(AbstractMarket):
+    _all_auction_items: List[AuctionItem]
+    _all_auction_items_index: int
+    _item_satisfies_campaign_func: Callable
+    num_of_items_per_timestep: int
+
+    def __init__(self, auction: AbstractAuction, bidder_states: Iterable[CampaignBidderState],
+                 all_auction_items: List[AuctionItem], item_satisfies_campaign_func: Callable = None, 
+                 timestep: int = 0, num_of_items_per_timestep: int = 1):
+        super().__init__(auction, bidder_states, timestep)
+        self._all_auction_items = all_auction_items
+        self._all_auction_items_index = 0
+        if item_satisfies_campaign_func == None:
+            self._item_satisfies_campaign_func = lambda item, campaign: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, campaign.target)
+        else:
+            self._item_satisfies_campaign_func = item_satisfies_campaign_func
+        self.num_of_items_per_timestep = num_of_items_per_timestep
+
+    def run_auction(self, bids, item_matches_bid_spec_func=None):
+        return super().run_auction(bids, item_matches_bid_spec_func)
+
+    def update_auction_items(self):
+        self._auction_items = []
+        start_idx = self._all_auction_items_index
+        end_idx = min(start_idx + self.num_of_items_per_timestep, len(self._all_auction_items))
+        for i in range(start_idx, end_idx):
+            self._auction_items.append(self._all_auction_items[i])
+            self._all_auction_items_index += 1
+
+    def update_bidder_states(self, auction_results):
+        for bid in auction_results:
+            bidder = bid.bidder
+            if (bidder != None):
+                cbstate = self.get_bidder_state(bidder)
+                allocs = auction_results.get_allocations(bid)
+                expenditure = auction_results.get_total_expenditure(bid)
+                cbstate.spend += expenditure
+                cbstate.impressions += len(list(filter(
+                        lambda item: self._item_satisfies_campaign_func(item, cbstate.campaign), 
                         allocs)))
 
     def update_timestep(self):
