@@ -294,6 +294,97 @@ class TestSequentialAuction(unittest.TestCase):
         self.assertEqual(list(bid_2_result.values())[0], 2.0)
         self.assertEqual(unallocated, { })
 
+    def test_2(self):
+        auction_item_specs = self.auction_item_specs
+        campaigns = self.campaigns
+        auction = self.first_price_auction
+        bidder_states = [
+                CampaignBidderState("bidder1", campaigns[0]),
+                CampaignBidderState("bidder2", campaigns[1])
+        ]
+        auction_items = [
+                AuctionItem(auction_item_specs[0]),
+                AuctionItem(auction_item_specs[1])
+        ]
+        bids = [
+                Bid("bidder1", auction_item_specs[0], bid_per_item=1.0, total_limit=1.0),
+                Bid("bidder2", auction_item_specs[1], bid_per_item=2.0, total_limit=2.0)
+        ]
+        item_satisfies_campaign_func = lambda item, campaign: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, campaign.target)
+        item_matches_bid_spec_func = lambda item, bid: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, bid.auction_item_spec)
+        num_of_items_per_timestep = 1
+        market = SequentialAuction(auction, bidder_states, auction_items, 
+                                   item_satisfies_campaign_func=item_satisfies_campaign_func, 
+                                   num_of_items_per_timestep=num_of_items_per_timestep)
+        
+        results = None
+        horizon = (len(auction_items) + (num_of_items_per_timestep - 1)) // num_of_items_per_timestep
+        for i in range(horizon):
+            results = market.run_auction(bids, item_matches_bid_spec_func)
+        
+        bid_1_result = results.get_result(bids[0])
+        bid_2_result = results.get_result(bids[1])
+        unallocated = results.get_unallocated()
+
+        self.assertEqual(len(unallocated), 0)
+
+        self.assertEqual(bidder_states[0].spend, 1.0)
+        self.assertEqual(bidder_states[0].impressions, 1)
+        self.assertEqual(bidder_states[0].timestep, 1*horizon)
+        
+        self.assertEqual(bidder_states[1].spend, 2.0)
+        self.assertEqual(bidder_states[1].impressions, 1)
+        self.assertEqual(bidder_states[1].timestep, 1*horizon)
+
+    def test_3(self):
+        auction_item_specs = self.auction_item_specs
+        campaigns = self.campaigns
+        auction = self.first_price_auction
+        bidder_states = [
+                CampaignBidderState("bidder1", campaigns[0]),
+                CampaignBidderState("bidder2", campaigns[1])
+        ]
+        auction_items = [
+                AuctionItem(auction_item_specs[0]),
+                AuctionItem(auction_item_specs[1]),
+                AuctionItem(auction_item_specs[0]),
+                AuctionItem(auction_item_specs[0]),
+                AuctionItem(auction_item_specs[1]),
+                AuctionItem(auction_item_specs[0]),
+                AuctionItem(auction_item_specs[0]),
+                AuctionItem(auction_item_specs[1]),
+                AuctionItem(auction_item_specs[0])
+        ]
+        item_satisfies_campaign_func = lambda item, campaign: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, campaign.target)
+        item_matches_bid_spec_func = lambda item, bid: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, bid.auction_item_spec)
+        num_of_items_per_timestep = 2
+        market = SequentialAuction(auction, bidder_states, auction_items, 
+                                   item_satisfies_campaign_func=item_satisfies_campaign_func, 
+                                   num_of_items_per_timestep=num_of_items_per_timestep)
+        
+        results = None
+        horizon = (len(auction_items) + (num_of_items_per_timestep - 1)) // num_of_items_per_timestep
+        for i in range(horizon):
+            bids = [
+                Bid("bidder1", auction_item_specs[0], bid_per_item=1.0, total_limit=1.0),
+                Bid("bidder2", auction_item_specs[1], bid_per_item=2.0, total_limit=2.0)
+            ]
+            results = market.run_auction(bids, item_matches_bid_spec_func)
+        
+        bid_1_result = results.get_result(bids[0])
+        bid_2_result = results.get_result(bids[1])
+        unallocated = results.get_unallocated()
+
+        self.assertEqual(len(unallocated), 0)
+
+        self.assertEqual(bidder_states[0].spend, 1.0*5)
+        self.assertEqual(bidder_states[0].impressions, 1*5)
+        self.assertEqual(bidder_states[0].timestep, 1*horizon)
+        
+        self.assertEqual(bidder_states[1].spend, 2.0*3)
+        self.assertEqual(bidder_states[1].impressions, 1*3)
+        self.assertEqual(bidder_states[1].timestep, 1*horizon)
+
 
 if __name__ == '__main__':
     unittest.main()
