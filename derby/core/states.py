@@ -1,7 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from random import choice
-from typing import Set, List, Dict, OrderedDict
+from typing import Set, List, Dict
 import itertools
 from derby.core.ad_structures import Campaign
 
