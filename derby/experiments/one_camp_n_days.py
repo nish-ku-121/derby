@@ -3,7 +3,7 @@ from derby.core.basic_structures import AuctionItemSpecification
 from derby.core.ad_structures import Campaign
 from derby.core.auctions import KthPriceAuction
 from derby.core.pmfs import PMF
-from derby.core.environments import generate_trajectories, OneCampaignNDaysEnv
+from derby.core.environments import OneCampaignNDaysEnv
 from derby.core.agents import Agent
 from derby.core.policies import DummyPolicy1, DummyPolicy2
 from pprint import pprint
@@ -58,8 +58,8 @@ class Experiment:
 
         env.vectorize = True
         env.init(agents, num_of_days)
-        trajs, rewards = generate_trajectories(env, agents, num_of_trajs, horizon_cutoff, debug=debug)
-        return trajs, rewards
+        states, actions, rewards = type(env).generate_trajectories(env, num_of_trajs, horizon_cutoff, debug=debug)
+        return states, actions, rewards
 
     def exp_2(self, debug=False):
         auction_item_specs = self.auction_item_specs
@@ -91,16 +91,20 @@ class Experiment:
 
         env.init(agents, num_of_days)
         env.vectorize = False
-        trajs, rewards = generate_trajectories(env, agents, num_of_trajs, horizon_cutoff, debug=debug)
-        return trajs, rewards
+        states, actions, rewards = type(env).generate_trajectories(env, agents, num_of_trajs, horizon_cutoff, debug=debug)
+        return states, actions, rewards
 
 
 if __name__ == '__main__':
     experiment = Experiment()
-    trajs, rewards = experiment.exp_1(debug=False)
-    if trajs is not None:
-        print("trajs shape: {}".format(trajs.shape))
-        print(trajs)
+    states, actions, rewards = experiment.exp_1(debug=False)
+    if states is not None:
+        print("states shape: {}".format(states.shape))
+        print(states)
+        print()
+    if actions is not None:
+        print("actions shape: {}".format(actions.shape))
+        print(actions)
         print()
     if rewards is not None:
         print("rewards shape: {}".format(rewards.shape))
