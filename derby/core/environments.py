@@ -8,61 +8,14 @@ from derby.core.ad_structures import Campaign
 from derby.core.states import State, CampaignBidderState
 from derby.core.markets import OneCampaignMarket, SequentialAuctionMarket
 from derby.core.utils import flatten_2d
+from derby.core.agents import Agent
 
-
-
-def generate_trajectories(env, agents, num_of_trajs, horizon_cutoff, debug=False):
-    all_traj_states = None
-    all_traj_rewards = None
-    for i in range(num_of_trajs):
-        traj_i_states = []
-        traj_i_rewards = []
-        agents_joint_state = env.reset()
-        if env.vectorize:
-            traj_i_states.append(agents_joint_state)
-        if debug:
-            print("=== Traj {} ===".format(i))
-            print()
-            print("states 0")
-            print(agents_joint_state)
-        for j in range(horizon_cutoff):
-            actions = [ agent.compute_action(agents_joint_state) for agent in agents ] 
-            agents_joint_state, rewards, done = env.step(actions)
-            if env.vectorize:
-                traj_i_states.append(agents_joint_state)
-                traj_i_rewards.append(rewards)
-            if debug:
-                print("actions {}".format(j))
-                print(actions)
-                print("rewards {}".format(j))
-                print(rewards)
-                print("states {}".format(j+1))
-                print(agents_joint_state)
-                print("Done? {}".format(done))
-            if done:
-                break
-        print()
-
-        if env.vectorize:
-            # shape [episode length, num of agents, state size, batch size]
-            traj_i_states = np.array(traj_i_states)[:, :, :, None]
-            # shape [episode length, num of agents, batch size]
-            traj_i_rewards = np.array(traj_i_rewards)[:, :, None]
-            if all_traj_states is None:
-                all_traj_states = traj_i_states
-            else:
-                all_traj_states = np.concatenate((all_traj_states, traj_i_states), axis=3)
-            if all_traj_rewards is None:
-                all_traj_rewards = traj_i_rewards
-            else:
-                all_traj_rewards = np.concatenate((all_traj_rewards, traj_i_rewards), axis=2)
-    return all_traj_states, all_traj_rewards
 
 
 class AbstractEnvironment(ABC):
 
     @abstractmethod
-    def init(self, agents, horizon=None):
+    def init(self, agents: Iterable[Agent], horizon=None):
         pass
 
     @abstractmethod
@@ -77,12 +30,18 @@ class AbstractEnvironment(ABC):
 class MarketEnv(AbstractEnvironment):
 
     def __init__(self, vectorize=True):
-        self._market = None
         self.vectorize = vectorize
+        self._market = None
+        self.agents = None
+        self.horizon = None
+        self.done = False
 
     @abstractmethod
-    def init(self, agents, horizon=None):
-        pass
+    def init(self, agents: Iterable[Agent], horizon=None):
+        self.agents = tuple(agents)
+        for i in range(len(self.agents)):
+            self.agents[i].agent_num = i
+        self.horizon = horizon
 
     @abstractmethod
     def reset(self):
@@ -106,7 +65,7 @@ class MarketEnv(AbstractEnvironment):
                 bids[i][j] is the jth bid of agent i.
         '''
         if not self.vectorize:
-            # Assume actions is a 2D list of bid objects, where
+            # Assume actions is a 2D array of bid objects, where
             # actions[i] is agent i's bids and actions[i][j] is the jth bid of agent i.
             return actions
         bids = []
@@ -146,6 +105,84 @@ class MarketEnv(AbstractEnvironment):
         #   s = # of fields of a state vector
         return np.array(states_tensor)
 
+    @staticmethod
+    def generate_trajectories(env, num_of_trajs, horizon_cutoff, 
+                              debug=False, update_policies_after_every_step=False):
+        all_traj_states = None
+        all_traj_actions = None
+        all_traj_rewards = None
+        for i in range(num_of_trajs):
+            traj_i_states = None
+            traj_i_actions = None
+            traj_i_rewards = None
+            agents_joint_state = env.reset()
+            agents_joint_state = np.array(agents_joint_state)[None, :, None]
+            if debug:
+                print("=== Traj {} ===".format(i))
+                print()
+                print("states {}, shape {}".format(0, agents_joint_state.shape))
+                print(agents_joint_state)
+            for j in range(horizon_cutoff):
+    # TODO
+                actions = [ agent.compute_action(agents_joint_state) for agent in env.agents ]
+    #
+                agents_joint_state, rewards, done = env.step(actions)
+
+                # agents_joint_state is array of shape [num of agents]
+                # so reshape to [episode/trajectory length, num of agents, batch size]
+                agents_joint_state = np.array(agents_joint_state)[None, :, None]
+
+                # rewards is array of shape [num of agents]
+                # so reshape to [episode/trajectory length, num of agents, batch size]
+                rewards = np.array(rewards)[None, :, None]
+
+                # actions is array of shape [num of agents]
+                # so reshape to [episode/trajectory length, num of agents, batch size]
+                actions = np.array(actions)[None, :, None]
+
+    # TODO
+                # if update_policies_after_every_step:
+                #     for agent in env.agents:  
+                #         states = ...
+                #         actions = ...
+                #         rewards = ...
+                #         agent.update_policy(states, actions, rewards) for agent in env.agents
+    #
+                # Update trajectory
+                if env.vectorize:
+                    if traj_i_states is None: # shortcuting check for all
+                        traj_i_states = agents_joint_state
+                        traj_i_actions = actions
+                        traj_i_rewards = rewards
+                    else:
+                        traj_i_states = np.concatenate((traj_i_states, agents_joint_state), axis=0)
+                        traj_i_actions = np.concatenate((traj_i_actions, actions), axis=0)
+                        traj_i_rewards = np.concatenate((traj_i_rewards, rewards), axis=0)
+                if debug:
+                    print("actions {}, shape {}".format(j, actions.shape))
+                    print(actions)
+                    print("rewards {}, shape {}".format(j, rewards.shape))
+                    print(rewards)
+                    print("states {}, shape {}".format(j+1, agents_joint_state.shape))
+                    print(agents_joint_state)
+                    print("Done? {}".format(done))
+                if done:
+                    break
+            print()
+
+            # Update batch
+            if env.vectorize:
+                if all_traj_states is None: # shortcuting check for all
+                    all_traj_states = traj_i_states
+                    all_traj_actions = traj_i_actions
+                    all_traj_rewards = traj_i_rewards
+                else:
+                    all_traj_states = np.concatenate((all_traj_states, traj_i_states), axis=2)
+                    all_traj_actions = np.concatenate((all_traj_actions, traj_i_actions), axis=2)
+                    all_traj_rewards = np.concatenate((all_traj_rewards, traj_i_rewards), axis=2)
+
+        return all_traj_states, all_traj_actions, all_traj_rewards
+
 
 class OneCampaignNDaysEnv(MarketEnv):
 
@@ -158,20 +195,16 @@ class OneCampaignNDaysEnv(MarketEnv):
         self._num_items_per_timestep_range = (num_items_per_timestep_min, num_items_per_timestep_max)
         self._auction_item_spec_pmf = auction_item_spec_pmf
         self._auction_item_specs_by_id = { spec.uid : spec for spec in self._auction_item_spec_pmf.items() }
-        self._agents = None
-        self._num_of_days = 1
-        self.done = False
 
     def init(self, agents, horizon=1):
-        self._agents = tuple(agents)
-        self._num_of_days = horizon
+        super().init(agents, horizon=horizon)
 
     def reset(self):
         self.done = False
         bidder_states = []
-        camps = self._campaign_pmf.draw_n(len(self._agents))
-        for i in range(len(self._agents)):
-            agent = self._agents[i]
+        camps = self._campaign_pmf.draw_n(len(self.agents))
+        for i in range(len(self.agents)):
+            agent = self.agents[i]
             camp = camps[i]
             cbstate = CampaignBidderState(agent, camp)
             bidder_states.append(cbstate)
@@ -192,10 +225,10 @@ class OneCampaignNDaysEnv(MarketEnv):
         if not self.done:
             # Convert actions to a 2D list of bid objects, where bids[i] is agent i's 
             # bids and bids[i][j] is the jth bid of agent i.
-            bids = self.convert_from_actions_tensor(actions, self._agents, self._auction_item_specs_by_id)
+            bids = self.convert_from_actions_tensor(actions, self.agents, self._auction_item_specs_by_id)
 
             # Randomize the number of auction items available (i.e. users who show up) in this step
-            pre_step_agent_spends = [ self._market.get_bidder_state(agent).spend for agent in self._agents ]
+            pre_step_agent_spends = [ self._market.get_bidder_state(agent).spend for agent in self.agents ]
             num_items_min = self._num_items_per_timestep_range[0]
             num_items_max = self._num_items_per_timestep_range[1]
             self._market.num_of_items_per_timestep = np.random.randint(num_items_min, num_items_max)
@@ -203,11 +236,11 @@ class OneCampaignNDaysEnv(MarketEnv):
             # Run the auction
             item_matches_bid_spec_func = lambda item, bid: AuctionItemSpecification.is_a_type_of(item.auction_item_spec, bid.auction_item_spec)
             results = self._market.run_auction(flatten_2d(bids), item_matches_bid_spec_func)
-            self.done = (self._num_of_days != None) and (self._market.timestep == self._num_of_days)
+            self.done = (self.horizon != None) and (self._market.timestep == self.horizon)
             
             # Calculate each agent's reward
-            for i in range(len(self._agents)):
-                agent = self._agents[i]
+            for i in range(len(self.agents)):
+                agent = self.agents[i]
                 agent_bids = bids[i]
                 cbstate = self._market.get_bidder_state(agent)
                 states.append(cbstate)
