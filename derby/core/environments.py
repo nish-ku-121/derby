@@ -116,30 +116,34 @@ class MarketEnv(AbstractEnvironment):
             traj_i_actions = None
             traj_i_rewards = None
             agents_joint_state = env.reset()
-            agents_joint_state = np.array(agents_joint_state)[None, :, None]
+            # agents_joint_state is array of shape [num_of_agents, state_size]
+            # so reshape to [batch_size, episode_length, num_of_agents, state_size]
+            # note that state_size would be () (i.e. OOP objects instead of vectors)
+            # if vectorize is off. the below code appropriately handles both cases 
+            # of vectorize on/off.
+            agents_joint_state = np.array(agents_joint_state)[None, None, :]
+            if traj_i_states is None:
+                traj_i_states = agents_joint_state
+           
             if debug:
                 print("=== Traj {} ===".format(i))
                 print()
                 print("states {}, shape {}".format(0, agents_joint_state.shape))
                 print(agents_joint_state)
+
             for j in range(horizon_cutoff):
-    # TODO
-                actions = [ agent.compute_action(agents_joint_state) for agent in env.agents ]
-    #
+                actions = [ agent.compute_action(agents_joint_state[0,0]) for agent in env.agents ]
                 agents_joint_state, rewards, done = env.step(actions)
 
-                # agents_joint_state is array of shape [num of agents]
-                # so reshape to [episode/trajectory length, num of agents, batch size]
-                agents_joint_state = np.array(agents_joint_state)[None, :, None]
+                agents_joint_state = np.array(agents_joint_state)[None, None, :]
 
-                # rewards is array of shape [num of agents]
-                # so reshape to [episode/trajectory length, num of agents, batch size]
-                rewards = np.array(rewards)[None, :, None]
+                # actions is array of shape [num_of_agents]
+                # so reshape to [batch_size, episode_length-1, num_of_agents]
+                actions = np.array(actions)[None, None, :]
 
-                # actions is array of shape [num of agents]
-                # so reshape to [episode/trajectory length, num of agents, batch size]
-                actions = np.array(actions)[None, :, None]
-
+                # rewards is array of shape [num_of_agents]
+                # so reshape to [batch_size, episode_length-1, num_of_agents]
+                rewards = np.array(rewards)[None, None, :]         
     # TODO
                 # if update_policies_after_every_step:
                 #     for agent in env.agents:  
@@ -150,14 +154,13 @@ class MarketEnv(AbstractEnvironment):
     #
                 # Update trajectory
                 if env.vectorize:
-                    if traj_i_states is None: # shortcuting check for all
-                        traj_i_states = agents_joint_state
+                    traj_i_states = np.concatenate((traj_i_states, agents_joint_state), axis=1)
+                    if traj_i_rewards is None: # shortcuting check for all
                         traj_i_actions = actions
-                        traj_i_rewards = rewards
+                        traj_i_rewards = rewards    
                     else:
-                        traj_i_states = np.concatenate((traj_i_states, agents_joint_state), axis=0)
-                        traj_i_actions = np.concatenate((traj_i_actions, actions), axis=0)
-                        traj_i_rewards = np.concatenate((traj_i_rewards, rewards), axis=0)
+                        traj_i_actions = np.concatenate((traj_i_actions, actions), axis=1)
+                        traj_i_rewards = np.concatenate((traj_i_rewards, rewards), axis=1)   
                 if debug:
                     print("actions {}, shape {}".format(j, actions.shape))
                     print(actions)
@@ -177,9 +180,9 @@ class MarketEnv(AbstractEnvironment):
                     all_traj_actions = traj_i_actions
                     all_traj_rewards = traj_i_rewards
                 else:
-                    all_traj_states = np.concatenate((all_traj_states, traj_i_states), axis=2)
-                    all_traj_actions = np.concatenate((all_traj_actions, traj_i_actions), axis=2)
-                    all_traj_rewards = np.concatenate((all_traj_rewards, traj_i_rewards), axis=2)
+                    all_traj_states = np.concatenate((all_traj_states, traj_i_states), axis=0)
+                    all_traj_actions = np.concatenate((all_traj_actions, traj_i_actions), axis=0)
+                    all_traj_rewards = np.concatenate((all_traj_rewards, traj_i_rewards), axis=0)
 
         return all_traj_states, all_traj_actions, all_traj_rewards
 
