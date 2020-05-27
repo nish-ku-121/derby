@@ -1,5 +1,6 @@
 import unittest
-from derby.core.utils import kth_largest
+import numpy as np
+from derby.core.utils import kth_largest, flatten_2d, np_slice_i_of_dim_k
 
 
 
@@ -25,6 +26,21 @@ class TestUtils(unittest.TestCase):
 
 	def test_kth_largest_7(self):
 		self.assertEqual(kth_largest([1.4, 1.1, 0.1], 3, 0.0), 0.1)
+
+	def test_np_slice_i_of_dim_k_1(self):
+		arr = np.array(
+			[[[[ 10., 100.,   1.,   0.,   0.,   0.],
+         	   [ 10., 100.,   2.,   0.,   0.,   0.],
+         	   [ 10., 100.,   3.,   0.,   0.,   0.]],
+         	  [[ 10., 100.,   1.,   5.,   5.,   5.],
+         	   [ 10., 100.,   2.,   5.,   5.,   5.],
+         	   [ 10., 100.,   3.,   5.,   5.,   5.]]]]
+			)
+
+		self.assertTrue((np_slice_i_of_dim_k(arr, 0, 0) == arr[0]).all())
+		self.assertTrue((np_slice_i_of_dim_k(arr, 0, 1) == arr[:,0]).all())
+		self.assertTrue((np_slice_i_of_dim_k(arr, 0, 2) == arr[:,:,0]).all())
+
 
 if __name__ == '__main__':
 	unittest.main()

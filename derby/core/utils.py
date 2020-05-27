@@ -1,4 +1,5 @@
 import heapq
+import numpy as np
 
 
 
@@ -20,3 +21,16 @@ def flatten_2d(arr):
         for j in range(len(arr[i])):
             flattened.append(arr[i][j])
     return flattened
+
+def np_slice_i_of_dim_k(arr, i, k):
+    '''
+    takes an np array of shape [dim_0, dim_1,..., dim_k,..., dim_{n-1}]
+    and returns an np array of shape [dim_0, dim_1,..., dim_{n-1}],
+    where the ith slice of dim_k is selected.
+    '''
+    # slice (i.e. ':') symbol
+    slice_symb = np.index_exp[:]
+    # ':' symbol repeated k times for dims 0 to k-1
+    slices_symbs_up_to_k = slice_symb * k
+    slice_i = np.index_exp[i]
+    return arr[slices_symbs_up_to_k + slice_i]

@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Dict, TypeVar
 from derby.core.basic_structures import AuctionItem
 import numpy as np

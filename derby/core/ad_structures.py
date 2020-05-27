@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from typing import Set, List, Dict, OrderedDict
+from typing import Set, List, Dict
 import itertools
 from derby.core.basic_structures import AuctionItemSpecification
 
