@@ -11,6 +11,7 @@ class State(ABC):
     uid: int
 
     def __init__(self):
+        super().__init__()
         self.uid = next(type(self)._uid_generator)
 
     def __eq__(self, other):

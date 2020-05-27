@@ -8,40 +8,195 @@ from derby.core.ad_structures import Campaign
 from derby.core.states import State, CampaignBidderState
 from derby.core.markets import OneCampaignMarket, SequentialAuctionMarket
 from derby.core.utils import flatten_2d
-from derby.core.agents import Agent
+# cannot import this as it creates a circular import dependency
+# environments -imports-> agents -imports-> policies -imports-> environments
+# from derby.core.agents import Agent
+import os
+import tensorflow as tf
 
+# Killing optional CPU driver warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+
+
+def train(env, num_of_trajs, horizon_cutoff, debug=False, update_policies_after_every_step=False):
+    with tf.GradientTape() as tape:
+        states, actions, rewards = generate_trajectories(env, num_of_trajs, 
+                                                                horizon_cutoff, debug=debug,
+                                                                update_policies_after_every_step=update_policies_after_every_step)
+
+        # tuple (agent, states for agent, actions for agent, rewards for agent, agent's policy loss)
+        # for evey agent in env.agents.
+        sarl_per_agent = []
+        for agent in env.agents:
+            agent_states = env.get_folded_states(agent, states)
+            agent_actions = env.get_folded_actions(agent, actions)
+            agent_rewards = env.get_folded_rewards(agent, rewards)
+            agent_loss = agent.compute_policy_loss(agent_states, agent_actions, agent_rewards)
+            sarl_tup = (agent, agent_states, agent_actions, agent_rewards, agent_loss)
+            sarl_per_agent.append(sarl_tup)
+
+        if debug:
+            print("losses:")
+            print([agent_loss for _, _, _, _, agent_loss in sarl_per_agent])
+    
+    for ag, ag_states, ag_actions, ag_rewards, ag_loss in sarl_per_agent:
+        ag.update_policy(ag_states, ag_actions, ag_rewards, ag_loss, tf_grad_tape=tape)
+        ag.update_stats(ag_states, ag_actions, ag_rewards)
+
+def generate_trajectories(env, num_of_trajs, horizon_cutoff, 
+                          debug=False, update_policies_after_every_step=False):
+    all_traj_states = None
+    all_traj_actions = None
+    all_traj_rewards = None
+    for i in range(num_of_trajs):
+        traj_i_states = None
+        traj_i_actions = None
+        traj_i_rewards = None
+        all_agents_states = env.reset()
+        # all_agents_states is array of shape [num_of_agents, state_size]
+        # so reshape to [batch_size, episode_length, num_of_agents, state_size]
+        # note that state_size would be () (i.e. OOP objects instead of vectors)
+        # if vectorize is off. the below code appropriately handles both cases 
+        # of vectorize on/off.
+        all_agents_states = np.array(all_agents_states)[None, None, :]
+        if traj_i_states is None:
+            traj_i_states = all_agents_states
+       
+        if debug:
+            print("=== Traj {} ===".format(i))
+            print()
+            print("states {}, shape {}".format(0, all_agents_states.shape))
+            print(all_agents_states)
+
+        for j in range(horizon_cutoff):
+            actions = []
+            for agent in env.agents:
+                agent_states = env.get_folded_states(agent, all_agents_states)
+                actions.append(agent.compute_action(agent_states))
+            
+            all_agents_states, rewards, done = env.step(actions)
+
+            all_agents_states = np.array(all_agents_states)[None, None, :]
+
+            # actions is array of shape [num_of_agents]
+            # so reshape to [batch_size, episode_length-1, num_of_agents]
+            actions = np.array(actions)[None, None, :]
+
+            # rewards is array of shape [num_of_agents]
+            # so reshape to [batch_size, episode_length-1, num_of_agents]
+            rewards = np.array(rewards)[None, None, :]         
+# TODO: github issue #30
+            # if update_policies_after_every_step:
+            #     for agent in env.agents:  
+            #         states = ...
+            #         actions = ...
+            #         rewards = ...
+            #         agent.update_policy(states, actions, rewards) for agent in env.agents
+#
+            # Update trajectory
+            if env.vectorize:
+                traj_i_states = np.concatenate((traj_i_states, all_agents_states), axis=1)
+                if traj_i_rewards is None: # shortcuting check for all
+                    traj_i_actions = actions
+                    traj_i_rewards = rewards    
+                else:
+                    traj_i_actions = np.concatenate((traj_i_actions, actions), axis=1)
+                    traj_i_rewards = np.concatenate((traj_i_rewards, rewards), axis=1)   
+            if debug:
+                print("actions {}, shape {}".format(j, actions.shape))
+                print(actions)
+                print("rewards {}, shape {}".format(j, rewards.shape))
+                print(rewards)
+                print("states {}, shape {}".format(j+1, all_agents_states.shape))
+                print(all_agents_states)
+                print("Done? {}".format(done))
+            if done:
+                break 
+        if debug:
+            print()
+
+        # Update batch
+        if env.vectorize:
+            if all_traj_states is None: # shortcuting check for all
+                all_traj_states = traj_i_states
+                all_traj_actions = traj_i_actions
+                all_traj_rewards = traj_i_rewards
+            else:
+                all_traj_states = np.concatenate((all_traj_states, traj_i_states), axis=0)
+                all_traj_actions = np.concatenate((all_traj_actions, traj_i_actions), axis=0)
+                all_traj_rewards = np.concatenate((all_traj_rewards, traj_i_rewards), axis=0)
+
+    return all_traj_states, all_traj_actions, all_traj_rewards
 
 
 class AbstractEnvironment(ABC):
 
+    # Types of ways an array of shape [..., num_of_agents, vector_size_per_agent,...]
+    # can be folded/reshaped before being passed on.
+
+    # no folding, i.e. all agents relevant. shape [..., num_of_agents, vector_size_per_agent,...]
+    FOLD_TYPE_NONE = 0
+    # fold all, i.e. all agents relevant. shape [..., num_of_agents * vector_size_per_agent,...]
+    FOLD_TYPE_ALL = 1 
+    # a single agent's slice. shape [..., vector_size_per_agent,...]
+    FOLD_TYPE_SINGLE = 2 
+
+    def __init__(self):
+        super().__init__()
+        self.agents = None
+        self.horizon = 1
+        self.done = False
+
     @abstractmethod
-    def init(self, agents: Iterable[Agent], horizon=None):
-        pass
+    def init(self, agents, horizon=1):
+        self.agents = tuple(agents)
+        for i in range(len(self.agents)):
+            self.agents[i].agent_num = i
+        self.horizon = horizon
 
     @abstractmethod
     def reset(self):
+        '''
+        :return: array of shape [num_of_agents] representing 
+        the initial states of all agents.
+        '''
         pass
 
     @abstractmethod
     def step(self, actions):
+        '''
+        :param actions: an array of shape [num_of_agents]
+        :return: states, rewards, done. Where:
+        states is an array of shape [num_of_agents].
+        rewards is an array of shape [num_of_agents].
+        done is a boolean specifying if the environment has reach it's last step.
+        '''
+        pass
+
+    @abstractmethod
+    def get_folded_states(self, agent, states, fold_type=None):
+        pass
+
+    @abstractmethod
+    def get_folded_actions(self, agent, actions, fold_type=None):
+        pass
+
+    @abstractmethod
+    def get_folded_rewards(self, agent, rewards, fold_type=None):
         pass
 
 
 class MarketEnv(AbstractEnvironment):
 
     def __init__(self, vectorize=True):
+        super().__init__()
         self.vectorize = vectorize
         self._market = None
-        self.agents = None
-        self.horizon = None
-        self.done = False
 
     @abstractmethod
-    def init(self, agents: Iterable[Agent], horizon=None):
-        self.agents = tuple(agents)
-        for i in range(len(self.agents)):
-            self.agents[i].agent_num = i
-        self.horizon = horizon
+    def init(self, agents, horizon=1):
+        super().init(agents, horizon=horizon)
 
     @abstractmethod
     def reset(self):
@@ -105,86 +260,85 @@ class MarketEnv(AbstractEnvironment):
         #   s = # of fields of a state vector
         return np.array(states_tensor)
 
-    @staticmethod
-    def generate_trajectories(env, num_of_trajs, horizon_cutoff, 
-                              debug=False, update_policies_after_every_step=False):
-        all_traj_states = None
-        all_traj_actions = None
-        all_traj_rewards = None
-        for i in range(num_of_trajs):
-            traj_i_states = None
-            traj_i_actions = None
-            traj_i_rewards = None
-            agents_joint_state = env.reset()
-            # agents_joint_state is array of shape [num_of_agents, state_size]
-            # so reshape to [batch_size, episode_length, num_of_agents, state_size]
-            # note that state_size would be () (i.e. OOP objects instead of vectors)
-            # if vectorize is off. the below code appropriately handles both cases 
-            # of vectorize on/off.
-            agents_joint_state = np.array(agents_joint_state)[None, None, :]
-            if traj_i_states is None:
-                traj_i_states = agents_joint_state
-           
-            if debug:
-                print("=== Traj {} ===".format(i))
-                print()
-                print("states {}, shape {}".format(0, agents_joint_state.shape))
-                print(agents_joint_state)
+    def get_folded_states(self, agent, states, fold_type=None):
+        '''
+        Takes states and folds according to the fold type:
+            1) Does no folding.
+            2) Folds all agents' states into full joint states.
+               (i.e. shape [batch_size, episode_length, num_of_agents * state_size]).
+            3) Picks out only the states of the given agent out of all the agents states.
+               (i.e. [batch_size, episode_length, state_size])
+        Which case is true is based on whether the policy needs all agent's states or 
+        only the given agent's states.
+        Let new_state_size represent the new state size in each scenario.
+        :param agent: the agent.
+        :param states: an array of shape [batch_size, episode_length, num_of_agents, state_size].
+        :return: an array of shape [batch_size, episode_length, new_state_size]. Note that 
+        new_state_size is () if states are objects instead of vectors.
+        '''
+        if fold_type is None:
+            fold_type = agent.policy.states_fold_type()
 
-            for j in range(horizon_cutoff):
-                actions = [ agent.compute_action(agents_joint_state[0,0]) for agent in env.agents ]
-                agents_joint_state, rewards, done = env.step(actions)
+        if fold_type == AbstractEnvironment.FOLD_TYPE_NONE:
+            return states
 
-                agents_joint_state = np.array(agents_joint_state)[None, None, :]
-
-                # actions is array of shape [num_of_agents]
-                # so reshape to [batch_size, episode_length-1, num_of_agents]
-                actions = np.array(actions)[None, None, :]
-
-                # rewards is array of shape [num_of_agents]
-                # so reshape to [batch_size, episode_length-1, num_of_agents]
-                rewards = np.array(rewards)[None, None, :]         
-    # TODO
-                # if update_policies_after_every_step:
-                #     for agent in env.agents:  
-                #         states = ...
-                #         actions = ...
-                #         rewards = ...
-                #         agent.update_policy(states, actions, rewards) for agent in env.agents
-    #
-                # Update trajectory
-                if env.vectorize:
-                    traj_i_states = np.concatenate((traj_i_states, agents_joint_state), axis=1)
-                    if traj_i_rewards is None: # shortcuting check for all
-                        traj_i_actions = actions
-                        traj_i_rewards = rewards    
-                    else:
-                        traj_i_actions = np.concatenate((traj_i_actions, actions), axis=1)
-                        traj_i_rewards = np.concatenate((traj_i_rewards, rewards), axis=1)   
-                if debug:
-                    print("actions {}, shape {}".format(j, actions.shape))
-                    print(actions)
-                    print("rewards {}, shape {}".format(j, rewards.shape))
-                    print(rewards)
-                    print("states {}, shape {}".format(j+1, agents_joint_state.shape))
-                    print(agents_joint_state)
-                    print("Done? {}".format(done))
-                if done:
-                    break
-            print()
-
-            # Update batch
-            if env.vectorize:
-                if all_traj_states is None: # shortcuting check for all
-                    all_traj_states = traj_i_states
-                    all_traj_actions = traj_i_actions
-                    all_traj_rewards = traj_i_rewards
+        elif fold_type == AbstractEnvironment.FOLD_TYPE_ALL:
+            if self.vectorize:
+                states_type = type(states)
+                if states_type is np.ndarray:
+                    rtn = states.reshape(*states.shape[:2], -1)
+                elif tf.is_tensor(states):
+                    st_shape = tf.shape(states)
+                    rtn = tf.reshape(states, [*st_shape[:2]] + [tf.reduce_prod(st_shape[2:])])
                 else:
-                    all_traj_states = np.concatenate((all_traj_states, traj_i_states), axis=0)
-                    all_traj_actions = np.concatenate((all_traj_actions, traj_i_actions), axis=0)
-                    all_traj_rewards = np.concatenate((all_traj_rewards, traj_i_rewards), axis=0)
+                    raise Exception("states is of type {}, which this func does not know how to fold!".format(states_type))
+                return rtn
+            else:
+                raise Exception("Do not know how to fold for fold type {} in non-vectorized case!".format(fold_type))
 
-        return all_traj_states, all_traj_actions, all_traj_rewards
+        elif fold_type == AbstractEnvironment.FOLD_TYPE_SINGLE:
+            return states[:, :, agent.agent_num]
+        
+        else:
+            raise Exception("Do not know how to fold for fold type {}!".format(fold_type))
+
+    def get_folded_actions(self, agent, actions, fold_type=None):
+        '''
+        :param actions: an array of shape [batch_size, episode_length, num_of_agents, ...].
+        '''
+        if fold_type is None:
+            fold_type = agent.policy.actions_fold_type()
+
+        if fold_type == AbstractEnvironment.FOLD_TYPE_NONE:
+            return actions
+
+        elif fold_type == AbstractEnvironment.FOLD_TYPE_ALL:
+            Exception("Do not know how to fold for fold type {}!".format(fold_type))
+            
+        elif fold_type == AbstractEnvironment.FOLD_TYPE_SINGLE:
+            return actions[:, :, agent.agent_num]
+        
+        else:
+            raise Exception("Do not know how to fold for fold type {}!".format(fold_type))
+
+    def get_folded_rewards(self, agent, rewards, fold_type=None):
+        '''
+        :param rewards: an array of shape [batch_size, episode_length, num_of_agents].
+        '''
+        if fold_type is None:
+            fold_type = agent.policy.rewards_fold_type()
+
+        if fold_type == AbstractEnvironment.FOLD_TYPE_NONE:
+            return rewards
+
+        elif fold_type == AbstractEnvironment.FOLD_TYPE_ALL:
+            Exception("Do not know how to fold for fold type {}!".format(fold_type))
+            
+        elif fold_type == AbstractEnvironment.FOLD_TYPE_SINGLE:
+            return rewards[:, :, agent.agent_num]
+        
+        else:
+            raise Exception("Do not know how to fold for fold type {}!".format(fold_type))
 
 
 class OneCampaignNDaysEnv(MarketEnv):
@@ -271,21 +425,17 @@ class SequentialAuctionEnv(MarketEnv):
         self._campaign_pmf = campaign_pmf
         self._num_items_per_timestep = num_of_items_per_timestep
         self._auction_item_specs_by_id = { item.auction_item_spec.uid : item.auction_item_spec for item in self._all_auction_items }
-        self._agents = None
-        self._num_of_days = 1
         self.auction_items = []
-        self.done = False
 
-    def init(self, agents, horizon=None):
-        self._agents = tuple(agents)
-        self._num_of_days = horizon
+    def init(self, agents, horizon=1):
+        super().init(agents, horizon=horizon)
 
     def reset(self):
         self.done = False
         bidder_states = []
-        camps = self._campaign_pmf.draw_n(len(self._agents))
-        for i in range(len(self._agents)):
-            agent = self._agents[i]
+        camps = self._campaign_pmf.draw_n(len(self.agents))
+        for i in range(len(self.agents)):
+            agent = self.agents[i]
             camp = camps[i]
             cbstate = CampaignBidderState(agent, camp)
             bidder_states.append(cbstate)
@@ -314,18 +464,18 @@ class SequentialAuctionEnv(MarketEnv):
         if not self.done:
             # Convert actions to a 2D list of bid objects, where bids[i] is agent i's 
             # bids and bids[i][j] is the jth bid of agent i.
-            bids = self.convert_from_actions_tensor(actions, self._agents, self._auction_item_specs_by_id)
+            bids = self.convert_from_actions_tensor(actions, self.agents, self._auction_item_specs_by_id)
 
-            pre_step_agent_spends = [ self._market.get_bidder_state(agent).spend for agent in self._agents ]
+            pre_step_agent_spends = [ self._market.get_bidder_state(agent).spend for agent in self.agents ]
 
             # Run the auction
             item_matches_bid_spec_func = lambda item, bid: AuctionItemSpecification.is_item_type_match(item.auction_item_spec, bid.auction_item_spec)
             results = self._market.run_auction(flatten_2d(bids), item_matches_bid_spec_func)
-            self.done = (self._num_of_days != None) and (self._market.timestep == self._num_of_days)
+            self.done = (self.horizon != None) and (self._market.timestep == self.horizon)
             
             # Calculate each agent's reward
-            for i in range(len(self._agents)):
-                agent = self._agents[i]
+            for i in range(len(self.agents)):
+                agent = self.agents[i]
                 agent_bids = bids[i]
                 cbstate = self._market.get_bidder_state(agent)
                 states.append(cbstate)
