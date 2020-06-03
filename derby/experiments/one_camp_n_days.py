@@ -7,6 +7,9 @@ from derby.core.environments import train, generate_trajectories, OneCampaignNDa
 from derby.core.agents import Agent
 from derby.core.policies import DummyPolicy1, DummyPolicy2, BudgetPerReachPolicy, DummyREINFORCE
 from pprint import pprint
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+import time
 import os
 import tensorflow as tf
 
@@ -152,32 +155,52 @@ class Experiment:
                                   num_items_per_timestep_min, num_items_per_timestep_max)
   
         num_of_days = 5 # how long the game lasts
-        num_of_trajs = 1 # how many times to run the game from start to finish
+        num_of_trajs = 20 # how many times to run the game from start to finish
         horizon_cutoff = 100
         agents = [
-                    Agent("agent1", DummyREINFORCE()), 
+                    Agent("agent1", DummyREINFORCE(learning_rate=0.0002)), 
 #                    Agent("agent2", DummyPolicy1(auction_item_specs[1], 0.5, 0.5))
         ]   
         env.vectorize = True
         env.init(agents, num_of_days)
         
-        NUM_EPOCHS = 50
+        # an array of shape [num_of_samples, num_of_agents, state_size]
+        agent_states_samples = env.get_states_samples(10000)
+        agent_states_samples = agent_states_samples.reshape(-1, *agent_states_samples.shape[2:])
+        # scaler = ColumnTransformer([
+        #                         ('0', MinMaxScaler(), [0]), 
+        #                         ('1', MinMaxScaler(), [1]), 
+        #                         #('2', 'passthrough', [2]), 
+        #                         ('2', MinMaxScaler(), [2]), 
+        #                         ('3', MinMaxScaler(), [3]), 
+        #                         ('4', MinMaxScaler(), [4]), 
+        #                         ('5', MinMaxScaler(), [5])
+        # ])
+        scaler = MinMaxScaler()
+        scaler.fit(agent_states_samples)
+        scale_states_func = lambda states: scaler.transform(states)
+        # pprint(scaler.inverse_transform(scaler.transform([[10, 100, 1, 100, 0, 0]])))
+
+        NUM_EPOCHS = 150
+        agents[0].policy.build( (NUM_EPOCHS, num_of_trajs, len(agents) * len(agent_states_samples[0])) )
+        agents[0].policy.summary()
+        print("optimizer: {}, learning_rate: {}".format(agents[0].policy.optimizer, agents[0].policy.learning_rate))
         print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS))
-        import time
+        
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff, scale_states_func=scale_states_func, debug=debug)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
         
         end = time.time()
+
         avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
         print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
         print("Took {} sec to train".format(end-start))
-        print("model: {}".format(agents[0].policy))
 
         return None, None, None
 
@@ -204,36 +227,48 @@ class Experiment:
                                   num_items_per_timestep_min, num_items_per_timestep_max)
   
         num_of_days = 5 # how long the game lasts
-        num_of_trajs = 1 # how many times to run the game from start to finish
+        num_of_trajs = 20 # how many times to run the game from start to finish
         horizon_cutoff = 100
         agents = [
-                    Agent("agent1", DummyREINFORCE()), 
+                    Agent("agent1", DummyREINFORCE(learning_rate=0.0002)), 
         ]
         env.vectorize = True
         env.init(agents, num_of_days)
         
-        NUM_EPOCHS = 100
+        # an array of shape [num_of_samples, num_of_agents, state_size]
+        agent_states_samples = env.get_states_samples(10000)
+        agent_states_samples = agent_states_samples.reshape(-1, *agent_states_samples.shape[2:])
+        scaler = MinMaxScaler()
+        scaler.fit(agent_states_samples)
+        scale_states_func = lambda states: scaler.transform(states)
+
+        NUM_EPOCHS = 150
+        agents[0].policy.build( (NUM_EPOCHS, num_of_trajs, len(agents) * len(agent_states_samples[0])) )
+        agents[0].policy.summary()
+        print("optimizer: {}, learning_rate: {}".format(agents[0].policy.optimizer, agents[0].policy.learning_rate))
         print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS))
-        import time
+        
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff, scale_states_func=scale_states_func, debug=debug)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
         
         end = time.time()
+
         avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
         print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
         print("Took {} sec to train".format(end-start))
-        print("model: {}".format(agents[0].policy))
+
+        return None, None, None
 
 
 if __name__ == '__main__':
     experiment = Experiment()
-    exp_func = experiment.exp_4
+    exp_func = experiment.exp_5
     print("Running experiment {}".format(exp_func.__name__))
     states, actions, rewards = exp_func(debug=False)
     if states is not None:

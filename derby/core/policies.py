@@ -258,11 +258,12 @@ work.
 '''
 class DummyREINFORCE(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, is_partial=False, discount_factor=1):
+    def __init__(self, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
         self.is_tensorflow = True
+        self.learning_rate = learning_rate
 
         self.choices = [
             [ [1, 1.0, 1.0] ],
@@ -274,7 +275,7 @@ class DummyREINFORCE(AbstractPolicy, tf.keras.Model):
         self.layer1_size = 1 #50
         self.layer1_ker_init = tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
         self.layer2_ker_init = tf.keras.initializers.RandomUniform(minval=0., maxval=0.25)
-        self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.0001)
+        self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
         self.dense2 = tf.keras.layers.Dense(self.num_actions, use_bias=False, kernel_initializer=self.layer2_ker_init, activation='softmax', dtype='float64')
 

@@ -19,10 +19,12 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
 
-def train(env, num_of_trajs, horizon_cutoff, debug=False, update_policies_after_every_step=False):
+def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, debug=False, update_policies_after_every_step=False):
     with tf.GradientTape() as tape:
         states, actions, rewards = generate_trajectories(env, num_of_trajs, 
-                                                                horizon_cutoff, debug=debug,
+                                                                horizon_cutoff,
+                                                                scale_states_func=scale_states_func,
+                                                                debug=debug,
                                                                 update_policies_after_every_step=update_policies_after_every_step)
 
         # tuple (agent, states for agent, actions for agent, rewards for agent, agent's policy loss)
@@ -44,8 +46,15 @@ def train(env, num_of_trajs, horizon_cutoff, debug=False, update_policies_after_
         ag.update_policy(ag_states, ag_actions, ag_rewards, ag_loss, tf_grad_tape=tape)
         ag.update_stats(ag_states, ag_actions, ag_rewards)
 
-def generate_trajectories(env, num_of_trajs, horizon_cutoff, 
-                          debug=False, update_policies_after_every_step=False):
+def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=None, 
+                            debug=False, update_policies_after_every_step=False):
+    # A function responsible for scaling/normalizing each agent state
+    # in a list of agent states. By default, do no scaling.
+    # Input to scale_states_func will be an array of shape 
+    # [num_of_states, state_size].
+    if scale_states_func is None:
+        scale_states_func = lambda states: states
+
     all_traj_states = None
     all_traj_actions = None
     all_traj_rewards = None
@@ -54,6 +63,7 @@ def generate_trajectories(env, num_of_trajs, horizon_cutoff,
         traj_i_actions = None
         traj_i_rewards = None
         all_agents_states = env.reset()
+        all_agents_states = scale_states_func(all_agents_states)
         # all_agents_states is array of shape [num_of_agents, state_size]
         # so reshape to [batch_size, episode_length, num_of_agents, state_size]
         # note that state_size would be () (i.e. OOP objects instead of vectors)
@@ -76,6 +86,7 @@ def generate_trajectories(env, num_of_trajs, horizon_cutoff,
                 actions.append(agent.compute_action(agent_states))
             
             all_agents_states, rewards, done = env.step(actions)
+            all_agents_states = scale_states_func(all_agents_states)
 
             all_agents_states = np.array(all_agents_states)[None, None, :]
 
@@ -175,6 +186,14 @@ class AbstractEnvironment(ABC):
         pass
 
     @abstractmethod
+    def get_states_samples(self, num_of_samples=1):
+        '''
+        Returns an array of shape [num_of_samples, num_of_agents, state_size]
+        containing samples of possible states of the environment.
+        '''
+        pass
+
+    @abstractmethod
     def get_folded_states(self, agent, states, fold_type=None):
         pass
 
@@ -206,59 +225,9 @@ class MarketEnv(AbstractEnvironment):
     def step(self, actions):
         pass
 
-    def convert_from_actions_tensor(self, actions, agents, auction_item_specs_by_id):
-        '''
-        (if self.vectorize is True)
-        Assume actions is a numpy array of shape [m, n, k]
-        where:
-            m = # of agents
-            n = # of bids (per agent)
-            k = # of fields of a bid vector
-        Assuming bid vector is: [auction_item_spec_id, bid_per_item, total_limit].
-        Assuming first dimension is in the same order as the agents list passed to init.
-        output: 2D list of bid objects. bids[i] are agent i's bids, 
-                bids[i][j] is the jth bid of agent i.
-        '''
-        if not self.vectorize:
-            # Assume actions is a 2D array of bid objects, where
-            # actions[i] is agent i's bids and actions[i][j] is the jth bid of agent i.
-            return actions
-        bids = []
-        for i in range(len(actions)):
-            agent_i_bids = []
-            for j in range(len(actions[i])):
-                bid_j_of_agent_i = actions[i][j]
-                bidder = agents[i]
-                auction_item_spec_id = bid_j_of_agent_i[0]
-                auction_item_spec = auction_item_specs_by_id[auction_item_spec_id]
-                bid_obj = Bid.from_vector(bid_j_of_agent_i, bidder, auction_item_spec)
-                agent_i_bids.append(bid_obj)
-            bids.append(agent_i_bids)
-        return bids
-
-    def convert_to_states_tensor(self, states: Iterable[State]):
-        '''
-        Assuming states is of the form:
-        [
-            state 1,
-            ...,
-            state n,
-            
-        ]
-        (The canonical use of this func is for n = m, where m is 
-         the # of agents)
-        '''
-        if not self.vectorize:
-            return states
-        states_tensor = []
-        for state in states:
-            vec = state.to_vector()
-            states_tensor.append(vec)
-        # numpy array of shape [n, s]
-        # where:
-        #   n = # of states
-        #   s = # of fields of a state vector
-        return np.array(states_tensor)
+    @abstractmethod
+    def get_states_samples(self, num_of_samples=1):
+        pass
 
     def get_folded_states(self, agent, states, fold_type=None):
         '''
@@ -340,6 +309,60 @@ class MarketEnv(AbstractEnvironment):
         else:
             raise Exception("Do not know how to fold for fold type {}!".format(fold_type))
 
+    def convert_from_actions_tensor(self, actions, agents, auction_item_specs_by_id):
+        '''
+        (if self.vectorize is True)
+        Assume actions is a numpy array of shape [m, n, k]
+        where:
+            m = # of agents
+            n = # of bids (per agent)
+            k = # of fields of a bid vector
+        Assuming bid vector is: [auction_item_spec_id, bid_per_item, total_limit].
+        Assuming first dimension is in the same order as the agents list passed to init.
+        output: 2D list of bid objects. bids[i] are agent i's bids, 
+                bids[i][j] is the jth bid of agent i.
+        '''
+        if not self.vectorize:
+            # Assume actions is a 2D array of bid objects, where
+            # actions[i] is agent i's bids and actions[i][j] is the jth bid of agent i.
+            return actions
+        bids = []
+        for i in range(len(actions)):
+            agent_i_bids = []
+            for j in range(len(actions[i])):
+                bid_j_of_agent_i = actions[i][j]
+                bidder = agents[i]
+                auction_item_spec_id = bid_j_of_agent_i[0]
+                auction_item_spec = auction_item_specs_by_id[auction_item_spec_id]
+                bid_obj = Bid.from_vector(bid_j_of_agent_i, bidder, auction_item_spec)
+                agent_i_bids.append(bid_obj)
+            bids.append(agent_i_bids)
+        return bids
+
+    def convert_to_states_tensor(self, states: Iterable[State]):
+        '''
+        Assuming states is of the form:
+        [
+            state 1,
+            ...,
+            state n,
+            
+        ]
+        (The canonical use of this func is for n = m, where m is 
+         the # of agents)
+        '''
+        if not self.vectorize:
+            return states
+        states_tensor = []
+        for state in states:
+            vec = state.to_vector()
+            states_tensor.append(vec)
+        # numpy array of shape [n, s]
+        # where:
+        #   n = # of states
+        #   s = # of fields of a state vector
+        return np.array(states_tensor)
+
 
 class OneCampaignNDaysEnv(MarketEnv):
 
@@ -413,6 +436,24 @@ class OneCampaignNDaysEnv(MarketEnv):
         # numpy array of shape [m, ]
         rewards = np.array(rewards)
         return states, rewards, self.done
+
+    def get_states_samples(self, num_of_samples=1):
+        samples = []
+        for i in range(num_of_samples):
+            bidder_states = []
+            camps = self._campaign_pmf.draw_n(len(self.agents))
+            for i in range(len(self.agents)):
+                agent = self.agents[i]
+                camp = camps[i]
+                cbstate = CampaignBidderState(agent, camp)
+                cbstate.spend = np.random.sample() * camp.budget
+                cbstate.impressions = np.random.randint(camp.reach + 1)
+                cbstate.timestep = np.random.randint(self.horizon + 1)
+                bidder_states.append(cbstate)
+            bidder_states = self.convert_to_states_tensor(bidder_states)
+            samples.append(bidder_states)
+        samples = np.array(samples)
+        return samples
 
 
 class SequentialAuctionEnv(MarketEnv):
