@@ -6,6 +6,7 @@ bleach==3.1.4
 cachetools==4.1.0
 certifi==2020.4.5.1
 chardet==3.0.4
+cloudpickle==1.4.1
 colorama==0.4.3
 cycler==0.10.0
 dataclasses==0.6
@@ -77,6 +78,7 @@ tensorboard==2.2.1
 tensorboard-plugin-wit==1.6.0.post3
 tensorflow==2.2.0
 tensorflow-estimator==2.2.0
+tensorflow-probability==0.10.0
 termcolor==1.1.0
 terminado==0.8.3
 testpath==0.4.4

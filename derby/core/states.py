@@ -61,8 +61,9 @@ class CampaignBidderState(BidderState):
                                                                         )
 
     def to_vector(self):
-        vec = [
-                self.campaign.reach, self.campaign.budget, self.campaign.target.uid,
-                self.spend, self.impressions, self.timestep
-            ]
+        if self.campaign is None:
+            camp_vec = [0, 0, 0]
+        else:
+            camp_vec = [self.campaign.reach, self.campaign.budget, self.campaign.target.uid]
+        vec = camp_vec + [self.spend, self.impressions, self.timestep]
         return vec

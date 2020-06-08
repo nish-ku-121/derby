@@ -91,8 +91,12 @@ def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=N
             all_agents_states = np.array(all_agents_states)[None, None, :]
 
             # actions is array of shape [num_of_agents]
-            # so reshape to [batch_size, episode_length-1, num_of_agents]
-            actions = np.array(actions)[None, None, :]
+            # since each agent can have a different number of subactions (e.g. bids),
+            # don't concat into a single tensor. Instead, concat individual tensors
+            # for each agent.
+            # so reshape to list of [batch_size, episode_length-1] tensors, one for
+            # each agent.
+            actions = [np.array(a)[None, None] for a in actions]
 
             # rewards is array of shape [num_of_agents]
             # so reshape to [batch_size, episode_length-1, num_of_agents]
@@ -112,10 +116,10 @@ def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=N
                     traj_i_actions = actions
                     traj_i_rewards = rewards    
                 else:
-                    traj_i_actions = np.concatenate((traj_i_actions, actions), axis=1)
-                    traj_i_rewards = np.concatenate((traj_i_rewards, rewards), axis=1)   
+                    traj_i_actions = [ np.concatenate((traj_i_actions[i], actions[i]), axis=1) for i in range(len(actions)) ]
+                    traj_i_rewards = np.concatenate((traj_i_rewards, rewards), axis=1)
             if debug:
-                print("actions {}, shape {}".format(j, actions.shape))
+                print("actions {}".format(j))
                 print(actions)
                 print("rewards {}, shape {}".format(j, rewards.shape))
                 print(rewards)
@@ -135,7 +139,7 @@ def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=N
                 all_traj_rewards = traj_i_rewards
             else:
                 all_traj_states = np.concatenate((all_traj_states, traj_i_states), axis=0)
-                all_traj_actions = np.concatenate((all_traj_actions, traj_i_actions), axis=0)
+                all_traj_actions = [ np.concatenate((all_traj_actions[i], traj_i_actions[i]), axis=0) for i in range(len(traj_i_actions))]
                 all_traj_rewards = np.concatenate((all_traj_rewards, traj_i_rewards), axis=0)
 
     return all_traj_states, all_traj_actions, all_traj_rewards
@@ -273,7 +277,8 @@ class MarketEnv(AbstractEnvironment):
 
     def get_folded_actions(self, agent, actions, fold_type=None):
         '''
-        :param actions: an array of shape [batch_size, episode_length, num_of_agents, ...].
+        :param actions: a list of size num_of_agents, where each entry is 
+        an array of shape [batch_size, episode_length, ...].
         '''
         if fold_type is None:
             fold_type = agent.policy.actions_fold_type()
@@ -285,7 +290,7 @@ class MarketEnv(AbstractEnvironment):
             Exception("Do not know how to fold for fold type {}!".format(fold_type))
             
         elif fold_type == AbstractEnvironment.FOLD_TYPE_SINGLE:
-            return actions[:, :, agent.agent_num]
+            return actions[agent.agent_num]
         
         else:
             raise Exception("Do not know how to fold for fold type {}!".format(fold_type))
@@ -431,7 +436,7 @@ class OneCampaignNDaysEnv(MarketEnv):
                     agent_reward += min(cbstate.campaign.budget, 
                                         (cbstate.impressions / (1.0 * cbstate.campaign.reach)) * cbstate.campaign.budget)
                 rewards.append(agent_reward)
-        
+
         states = self.convert_to_states_tensor(states)
         # numpy array of shape [m, ]
         rewards = np.array(rewards)
@@ -445,9 +450,14 @@ class OneCampaignNDaysEnv(MarketEnv):
             for i in range(len(self.agents)):
                 agent = self.agents[i]
                 camp = camps[i]
+                # choose between the "null" campaign and camp.
+                # to allow for better extrapolation/normalization.
+                camp = np.random.choice([None, camp])
+                budget = 0 if camp is None else camp.budget
+                reach = 0 if camp is None else camp.reach
                 cbstate = CampaignBidderState(agent, camp)
-                cbstate.spend = np.random.sample() * camp.budget
-                cbstate.impressions = np.random.randint(camp.reach + 1)
+                cbstate.spend = np.random.sample() * budget
+                cbstate.impressions = np.random.randint(reach + 1)
                 cbstate.timestep = np.random.randint(self.horizon + 1)
                 bidder_states.append(cbstate)
             bidder_states = self.convert_to_states_tensor(bidder_states)
