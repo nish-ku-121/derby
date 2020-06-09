@@ -99,8 +99,10 @@ class Bid:
         
         # A bid cannot be negative
         assert self.bid_per_item >= 0
-        # A limit cannot be non-positive ## TODO: why? ask enrique
-        assert self.total_limit > 0
+        # A limit cannot be non-positive 
+        # TODO: why? ask enrique
+        # changed to >=0 instead of >0.
+        assert self.total_limit >= 0
         # A bid cannot be bigger than its limit, since in the worst case a bidder could end up paying a price arbitrarily close to its bid.
         assert self.bid_per_item <= self.total_limit
 
@@ -171,6 +173,9 @@ class AuctionResults:
 
     def get_total_expenditure(self, bid: Bid):
         return sum(self.get_expenditures(bid))
+
+    def __repr__(self):
+        return str(self.allocations_and_expenditures)
 
     def __iter__(self):
         return AuctionResultsIterator(self)

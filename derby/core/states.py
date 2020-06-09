@@ -1,7 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from random import choice
-from typing import Set, List, Dict, OrderedDict
+from typing import Set, List, Dict
 import itertools
 from derby.core.ad_structures import Campaign
 
@@ -13,6 +11,7 @@ class State(ABC):
     uid: int
 
     def __init__(self):
+        super().__init__()
         self.uid = next(type(self)._uid_generator)
 
     def __eq__(self, other):
@@ -62,8 +61,9 @@ class CampaignBidderState(BidderState):
                                                                         )
 
     def to_vector(self):
-        vec = [
-                self.campaign.reach, self.campaign.budget, self.campaign.target.uid,
-                self.spend, self.impressions, self.timestep
-            ]
+        if self.campaign is None:
+            camp_vec = [0, 0, 0]
+        else:
+            camp_vec = [self.campaign.reach, self.campaign.budget, self.campaign.target.uid]
+        vec = camp_vec + [self.spend, self.impressions, self.timestep]
         return vec
