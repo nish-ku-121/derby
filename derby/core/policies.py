@@ -1181,7 +1181,9 @@ class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
         neg_logs = tf.clip_by_value(neg_logs, -1e9, 1e9)
         losses = neg_logs * tf.stop_gradient(advantage)
         actor_loss = tf.reduce_sum(losses)
-        critic_loss = tf.reduce_sum((advantage)**2)
+        # shape [batch_size, episode_length-1]
+        discounted_rewards = self.discount(rewards)
+        critic_loss = tf.reduce_sum((discounted_rewards - q_state_values)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
 # DEBUG
         # # # # print(self.choices)
@@ -1197,10 +1199,10 @@ class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
         # # # # print(rewards)
         # # print("advtge:\n{}".format(discounted_rewards))
         # print("neg logs:\n{}".format(neg_logs))
-        # print("q_state vals:\n{}".format(q_state_values))
-        # print("actor_loss: {}".format(actor_loss))
-        # print("critic_loss: {}".format(critic_loss))
-        # print("tot loss: {}".format(total_loss))
+        print("q_state vals:\n{}".format(q_state_values))
+        print("actor_loss: {}".format(actor_loss))
+        print("critic_loss: {}".format(critic_loss))
+        print("tot loss: {}".format(total_loss))
 #
         return total_loss
 
