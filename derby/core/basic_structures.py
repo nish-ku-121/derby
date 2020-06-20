@@ -98,7 +98,10 @@ class Bid:
         self.total_limit = total_limit
         
         # A bid cannot be negative
-        assert self.bid_per_item >= 0
+        try:
+            assert self.bid_per_item >= 0
+        except:
+            print("bpi: {}".format(self.bid_per_item))
         # A limit cannot be non-positive 
         # TODO: why? ask enrique
         # changed to >=0 instead of >0.
