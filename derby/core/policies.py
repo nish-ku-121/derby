@@ -555,7 +555,7 @@ class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         # # print("advtge:\n{}".format(discounted_rewards))
         # print("neg logs:\n{}".format(neg_logs))
         # # # print("losses: {}".format(losses))
-        print("tot loss: {}".format(total_loss))
+        # print("tot loss: {}".format(total_loss))
 #
         return total_loss
 
@@ -952,7 +952,7 @@ class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
         # # # print("advtge:\n{}".format(discounted_rewards))
         # # print("neg logs:\n{}".format(neg_logs))
         # # # # print("losses: {}".format(losses))
-        print("tot loss: {}".format(total_loss))
+        # print("tot loss: {}".format(total_loss))
 #
         return total_loss
 
@@ -1136,11 +1136,11 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         action_prbs = tf.reduce_prod(tf.reduce_prod(action_distr.prob(subaction_dists_vals), axis=3), axis=2)
         # shape [batch_size, episode_length-1]
         discounted_rewards = self.discount(rewards)
-        # shape [batch_size, episode_length-1, 1]
-        state_values = self.value_function(states[:,:-1])
-        # reshape to [batch_size, episode_length-1]
+        # shape [batch_size, episode_length, 1]
+        state_values = self.value_function(states)
+        # reshape to [batch_size, episode_length]
         state_values = tf.reshape(state_values, (*state_values.shape[:1],-1))
-        advantage = discounted_rewards - state_values
+        advantage = discounted_rewards - state_values[:,:-1]
 
         neg_logs = -tf.math.log(action_prbs)
         # clip min/max values to avoid infinities.
@@ -1151,7 +1151,7 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
 # DEBUG
         # # # # print(self.choices)
-        print("loc:\n{}".format(action_distr.loc))
+        # print("loc:\n{}".format(action_distr.loc))
         # print("scale: {}".format(action_distr.scale))
         # print("low: {}".format(action_distr.low))
         # print("high: {}".format(action_distr.high))
@@ -1161,13 +1161,13 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         # # # # print(subaction_dists_vals)
         # # print("action prbs: {}".format(action_prbs))
         # # # # print(rewards)
-        print("disc rwds:\n{}".format(discounted_rewards))
-        print("neg logs:\n{}".format(neg_logs))
-        print("advtg:\n{}".format(advantage))
+        # print("disc rwds:\n{}".format(discounted_rewards))
+        # # print("neg logs:\n{}".format(neg_logs))
+        # # print("advtg:\n{}".format(advantage))
         # print("state vals:\n{}".format(state_values))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
-        print("tot loss: {}".format(total_loss))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
+        # print("tot loss: {}".format(total_loss))
 #
         return total_loss
 
@@ -1366,22 +1366,26 @@ class AC_MarketEnv_Continuous_v1(AbstractPolicy, tf.keras.Model):
         critic_loss = tf.reduce_sum((advantage)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
 # DEBUG
-        # # # # print(self.choices)
+        # # # # # print(self.choices)
         # print("loc:\n{}".format(action_distr.loc))
-        # print("scale: {}".format(action_distr.scale))
-        # print("low: {}".format(action_distr.low))
-        # print("high: {}".format(action_distr.high))
-        # # # # # print("states 2: {}".format(states))
-        # print("actions:\n{}".format(actions))
-        # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
-        # # # # print(subaction_dists_vals)
-        # # print("action prbs: {}".format(action_prbs))
-        # # # # print(rewards)
-        # # print("advtge:\n{}".format(discounted_rewards))
-        # print("neg logs:\n{}".format(neg_logs))
+        # # print("scale: {}".format(action_distr.scale))
+        # # print("low: {}".format(action_distr.low))
+        # # print("high: {}".format(action_distr.high))
+        # # # # # # print("states 2: {}".format(states))
+        # # print("actions:\n{}".format(actions))
+        # # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
+        # # # # # print(subaction_dists_vals)
+        # # # print("action prbs: {}".format(action_prbs))
+        # # # # # print(rewards)
+        # # print("neg logs:\n{}".format(neg_logs))
         # print("rwds:\n{}".format(rewards))
-        # print("targets:\n{}".format(targets))
-        # print("state vals:\n{}".format(state_values))
+        # discounted_rewards = self.discount(rewards)
+        # print("disc. rwds:\n{}".format(discounted_rewards))
+        # # print("targets:\n{}".format(targets))
+        # # print("state vals:\n{}".format(state_values))
+        # # # print("r_error:\n{}".format(discounted_rewards - state_values[:,:-1]))
+        # print("td_error:\n{}".format(advantage))
+        # print("r_loss: {}".format(tf.reduce_sum(neg_logs * tf.stop_gradient(discounted_rewards))))
         # print("actor_loss: {}".format(actor_loss))
         # print("critic_loss: {}".format(critic_loss))
         # print("tot loss: {}".format(total_loss))
@@ -1597,10 +1601,10 @@ class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
         # # # # print(rewards)
         # # print("advtge:\n{}".format(discounted_rewards))
         # print("neg logs:\n{}".format(neg_logs))
-        print("q_state vals:\n{}".format(q_state_values))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
-        print("tot loss: {}".format(total_loss))
+        # print("q_state vals:\n{}".format(q_state_values))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
+        # print("tot loss: {}".format(total_loss))
 #
         return total_loss
 
