@@ -555,7 +555,404 @@ class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         # # print("advtge:\n{}".format(discounted_rewards))
         # print("neg logs:\n{}".format(neg_logs))
         # # # print("losses: {}".format(losses))
-        print("tot loss: {}".format(total_loss))
+        # print("tot loss: {}".format(total_loss))
+#
+        return total_loss
+
+    def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
+        if tf_grad_tape is None:
+            raise Exception("No tf_grad_tape has been provided!")
+        else:
+            gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
+            self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+# DEBUG
+            # print("grads: {}".format(gradients))
+            # print("weights: {}".format(self.trainable_variables))
+#
+
+
+class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
+
+    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+        super().__init__()
+        self.is_partial = is_partial
+        self.discount_factor = discount_factor
+        self.is_tensorflow = True
+        self.learning_rate = learning_rate
+
+        self.auction_item_spec_ids = auction_item_spec_ids
+        self.subactions_min = 0
+        self.subactions_max = 1e15
+
+        # Network parameters and optimizer
+        self.num_subactions = len(self.auction_item_spec_ids)
+        # "2" because bid_per_item and total_limit
+        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
+        # is the dist for total_limit
+        self.num_dist_per_subaction = 2
+
+        self.layer1_size = 1 #50
+        self.layer1_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
+        self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
+        
+        self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
+        
+        # Layers for calculating \pi(a|s) = Uniform(a|low(s),high(s)) 
+        #                                 = \prod_j \prod_k Uniform(sub_a_j_dist_k|low(s),high(s))        
+        self.low_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, use_bias=False, activation=None, dtype='float64')
+        self.offset_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, use_bias=False, activation=None, dtype='float64')
+        
+
+    def states_fold_type(self):
+        if self.is_partial:
+            return AbstractEnvironment.FOLD_TYPE_SINGLE
+        else:
+            return AbstractEnvironment.FOLD_TYPE_ALL
+
+    def actions_fold_type(self):
+        return AbstractEnvironment.FOLD_TYPE_SINGLE
+
+    def rewards_fold_type(self):
+        return AbstractEnvironment.FOLD_TYPE_SINGLE
+
+    def call(self, states):
+        '''
+        :param states: An array of shape [batch_size, episode_length, new_state_size], 
+        where new_state_size is single_agent_state_size if self.partial else 
+        num_of_agents * single_agent_state_size.
+        :return: A distribution which (when sampled) returns an array of shape 
+        [batch_size, episode_length, num_subactions * num_dist_per_subaction]. 
+        The distribution represents probability distributions P(a | s_i) for 
+        each s_i in the episode and batch (via subactions of a, i.e. 
+            P(a | s_i) = P(a_sub_1_dist_1 | s_i) * ... * P(a_sub_j_dist_k | s_i) 
+        ).
+        '''
+        # Apply dense layers
+        output = self.dense1(states)
+
+        # Apply low and high layers.
+        # array of size [batch_size, episode_length, num_subactions * num_dist_per_subaction]
+        output_lows = self.low_layer(output)
+        # array of size [batch_size, episode_length, num_subactions * num_dist_per_subaction]
+        output_offsets = self.offset_layer(output)
+
+        # lows need to be >= 0 because bids need to be >= 0.
+        output_lows = tf.nn.softplus(output_lows)
+        # offsets need to be >= 0, so pass through softplus.
+        output_offsets = tf.nn.softplus(output_offsets) # + 1e-5
+
+        # reshape to [batch_size, episode_length, num_subactions, num_dist_per_subaction]
+        output_lows = tf.reshape(output_lows, [*output_lows.shape[:2]] + [self.num_subactions, self.num_dist_per_subaction])
+        output_offsets = tf.reshape(output_offsets, [*output_offsets.shape[:2]] + [self.num_subactions, self.num_dist_per_subaction])
+
+        # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
+        # so that it can be used as a multiplier.
+        output_lows = output_lows + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_lows.dtype)
+
+        # make highs = lows + offsets, so that they are always higher than lows.
+        output_highs = output_lows + output_offsets
+
+# DEBUG
+        # print("call states: {}".format(states))
+        # print("dense1 weights: {}".format(self.dense1.kernel))
+        # print("mus weights: {}".format(self.mu_layer.kernel))
+        # print("output: {}".format(output))
+        # print("lows: {}".format(output_lows))
+        # print("highs: {}".format(output_highs))
+#
+
+        # A distribution which (when sampled) returns an array of shape
+        # output_lows.shape, i.e. [batch_size, episode_length, low_layer_output_size].
+        dist = tfp.distributions.Uniform(low=output_lows, high=output_highs)
+
+        return dist
+
+    def choose_actions(self, call_output):
+        '''
+        :param call_output: output of call func.
+        :return: an array of shape [batch_size, episode_length] with actual actions choosen in some way.
+        '''      
+        # array of shape [batch_size, episode_length, num_subactions, num_dist_per_subaction]
+        samples = call_output.sample()
+
+        # create total_limit column that is bid_per_item column multiplied by the multiplier 
+        # (i.e. total_limit = bid_per_item * multiplier).
+        total_limit = samples[:,:,:,0:1] * samples[:,:,:,-1:]
+
+        # replace the last column (i.e. total_limit column of samples is now bid_per_item * multiplier).
+        samples = tf.where([True]*(self.num_dist_per_subaction-1) + [False], samples, total_limit)
+        samples = tf.clip_by_value(samples, self.subactions_min, self.subactions_max)
+        samples_shape = tf.shape(samples)
+
+        # Note: num_subactions = num_auction_item_spec_ids
+        # array of shape [1, 1, num_auction_item_spec_ids]
+        ais_reshp = tf.convert_to_tensor(self.auction_item_spec_ids)[None,None,:]
+        # array of shape [batch_size, episode_length, num_auction_item_ids]
+        ais_reshp = tf.broadcast_to(ais_reshp, [*samples_shape[:2]] + [ais_reshp.shape[2]])
+        # array of shape [batch_size, episode_length, num_auction_item_ids, 1]
+        ais_reshp = tf.reshape(ais_reshp, [*ais_reshp.shape[:2]] + [-1,1])
+        # casting to same type as samples so that it can be concatenated with samples
+        ais_reshp = tf.cast(ais_reshp, samples.dtype)
+
+        # array of shape [batch_size, episode_length, num_subactions, 1 + num_dist_per_subaction]
+        chosen_actions = tf.concat([ais_reshp, samples], axis=3)
+# # DEBUG
+#         print("chosen_actions:\n{}".format(chosen_actions))
+# #
+        return chosen_actions
+
+    def loss(self, states, actions, rewards):
+        '''
+        Updates the policy.
+        :param states: An array of shape [batch_size, episode_length, new_state_size], 
+        where new_state_size is single_agent_state_size if self.partial else 
+        num_of_agents * single_agent_state_size.
+        :param actions: an array of shape [batch_size, episode_length-1, num_subactions, subaction_size].
+        :param rewards: an array of shape [batch_size, episode_length-1].
+        '''
+        # states is of episode_length, but actions is of episode_length-1.
+        # So delete the last state of each episode.
+        action_distr = self.call(states[:,:-1])
+
+        # if each subaction is [auction_item_spec_id, bid_per_item, total_limit],
+        # then slice out the 0th index to get each [bid_per_item, total_limit].
+        # Note: the length of this (i.e. 2) = self.num_dist_per_subaction.
+        subaction_dists_vals = actions[:,:,:,1:]
+
+        # get the multiplier by taking the total_limit column and dividing by bid_per_item column.
+        # (i.e. total_limit / bid_per_item = multiplier).
+        mult = subaction_dists_vals[:,:,:,-1:] / subaction_dists_vals[:,:,:,0:1]
+
+        # replace the last column with mult (i.e. total_limit column is now multiplier).
+        subaction_dists_vals = tf.where([True]*(self.num_dist_per_subaction-1) + [False], subaction_dists_vals, mult)
+
+        
+        # shape [batch_size, episode_length-1]
+        action_prbs = tf.reduce_prod(tf.reduce_prod(action_distr.prob(subaction_dists_vals), axis=3), axis=2)
+        # shape [batch_size, episode_length-1]
+        discounted_rewards = self.discount(rewards)
+        baseline = 0
+        advantage = discounted_rewards - baseline
+
+        neg_logs = -tf.math.log(action_prbs)
+        # clip min/max values to avoid infinities.
+        neg_logs = tf.clip_by_value(neg_logs, -1e9, 1e9)
+        losses = neg_logs * advantage
+        total_loss = tf.reduce_sum(losses)
+# DEBUG
+        # print("low:\n{}".format(action_distr.low))
+        # print("high:\n{}".format(action_distr.high))
+        # # # # # print("states 2: {}".format(states))
+        # print("actions:\n{}".format(actions))
+        # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
+        # # # # print(subaction_dists_vals)
+        # print("action prbs:\n{}".format(action_prbs))
+        # # # # print(rewards)
+        # # print("advtge:\n{}".format(discounted_rewards))
+        # print("neg logs:\n{}".format(neg_logs))
+        # # # print("losses: {}".format(losses))
+        # print("tot loss: {}".format(total_loss))
+#
+        return total_loss
+
+    def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
+        if tf_grad_tape is None:
+            raise Exception("No tf_grad_tape has been provided!")
+        else:
+            gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
+            self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+# DEBUG
+            # print("grads: {}".format(gradients))
+            # print("weights: {}".format(self.trainable_variables))
+#
+
+
+class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
+
+    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+        super().__init__()
+        self.is_partial = is_partial
+        self.discount_factor = discount_factor
+        self.is_tensorflow = True
+        self.learning_rate = learning_rate
+
+        self.auction_item_spec_ids = auction_item_spec_ids
+        self.subactions_min = 0
+        self.subactions_max = 1e15
+
+        # Network parameters and optimizer
+        self.num_subactions = len(self.auction_item_spec_ids)
+        # "2" because bid_per_item and total_limit
+        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
+        # is the dist for total_limit
+        self.num_dist_per_subaction = 2
+
+        self.layer1_size = 1 #50
+        self.layer1_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
+        self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
+        
+        self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
+        
+        # Layers for calculating \pi(a|s) = Triangular(a|low(s),high(s),peak(s)) 
+        #                                 = \prod_j \prod_k Triangular(sub_a_j_dist_k|low(s),high(s),peak(s))        
+        self.low_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, use_bias=False, activation=None, dtype='float64')
+        self.offset_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, use_bias=False, activation=None, dtype='float64')
+        self.offset2_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, use_bias=False, activation=None, dtype='float64')
+
+    def states_fold_type(self):
+        if self.is_partial:
+            return AbstractEnvironment.FOLD_TYPE_SINGLE
+        else:
+            return AbstractEnvironment.FOLD_TYPE_ALL
+
+    def actions_fold_type(self):
+        return AbstractEnvironment.FOLD_TYPE_SINGLE
+
+    def rewards_fold_type(self):
+        return AbstractEnvironment.FOLD_TYPE_SINGLE
+
+    def call(self, states):
+        '''
+        :param states: An array of shape [batch_size, episode_length, new_state_size], 
+        where new_state_size is single_agent_state_size if self.partial else 
+        num_of_agents * single_agent_state_size.
+        :return: A distribution which (when sampled) returns an array of shape 
+        [batch_size, episode_length, num_subactions * num_dist_per_subaction]. 
+        The distribution represents probability distributions P(a | s_i) for 
+        each s_i in the episode and batch (via subactions of a, i.e. 
+            P(a | s_i) = P(a_sub_1_dist_1 | s_i) * ... * P(a_sub_j_dist_k | s_i) 
+        ).
+        '''
+        # Apply dense layers
+        output = self.dense1(states)
+
+        # Apply low, offset, and peak layers.
+        # array of size [batch_size, episode_length, num_subactions * num_dist_per_subaction]
+        output_lows = self.low_layer(output)
+        # array of size [batch_size, episode_length, num_subactions * num_dist_per_subaction]
+        output_offsets = self.offset_layer(output)
+        # array of size [batch_size, episode_length, num_subactions * num_dist_per_subaction]
+        output_offsets2 = self.offset2_layer(output)
+
+        # lows need to be >= 0 because bids need to be >= 0.
+        output_lows = tf.nn.softplus(output_lows)
+        # offsets need to be >= 0, so pass through softplus.
+        output_offsets = tf.nn.softplus(output_offsets)
+        # peaks need to be >= 0, so pass through softplus.
+        output_offsets2 = tf.nn.softplus(output_offsets2)
+
+        # reshape to [batch_size, episode_length, num_subactions, num_dist_per_subaction]
+        output_lows = tf.reshape(output_lows, [*output_lows.shape[:2]] + [self.num_subactions, self.num_dist_per_subaction])
+        output_offsets = tf.reshape(output_offsets, [*output_offsets.shape[:2]] + [self.num_subactions, self.num_dist_per_subaction])
+        output_offsets2 = tf.reshape(output_offsets2, [*output_offsets2.shape[:2]] + [self.num_subactions, self.num_dist_per_subaction])
+
+        # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
+        # so that it can be used as a multiplier.
+        output_lows = output_lows + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_lows.dtype)
+        # # create column that is 1st column multiplied by the multiplier 
+        # # (i.e. bid_per_item * multiplier).
+        # mult = output_lows[:,:,:,0:1] * output_lows[:,:,:,-1:]
+        # # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
+        # output_lows = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_lows, mult)
+        # # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
+        # # than the bid_per_item dist, which 2) makes it unlikely that sampled 
+        # # total_limit is significantly lower than the sampled bid_per_item.
+
+        # make peak = low + offset, so that they are always higher than low.
+        output_peaks = output_lows + output_offsets
+        # make high = peak + offset2, so that they are always higher than peak.
+        output_highs = output_peaks + output_offsets2
+
+        # A distribution which (when sampled) returns an array of shape
+        # output_lows.shape, i.e. [batch_size, episode_length, low_layer_output_size].
+        dist = tfp.distributions.Triangular(low=output_lows, peak=output_peaks, high=output_highs)
+
+        return dist
+
+    def choose_actions(self, call_output):
+        '''
+        :param call_output: output of call func.
+        :return: an array of shape [batch_size, episode_length] with actual actions choosen in some way.
+        '''      
+        # array of shape [batch_size, episode_length, num_subactions, num_dist_per_subaction]
+        samples = call_output.sample()
+
+        # create total_limit column that is bid_per_item column multiplied by the multiplier 
+        # (i.e. total_limit = bid_per_item * multiplier).
+        total_limit = samples[:,:,:,0:1] * samples[:,:,:,-1:]
+
+        # replace the last column (i.e. total_limit column of samples is now bid_per_item * multiplier).
+        samples = tf.where([True]*(self.num_dist_per_subaction-1) + [False], samples, total_limit)
+        samples = tf.clip_by_value(samples, self.subactions_min, self.subactions_max)
+        samples_shape = tf.shape(samples)
+
+        # Note: num_subactions = num_auction_item_spec_ids
+        # array of shape [1, 1, num_auction_item_spec_ids]
+        ais_reshp = tf.convert_to_tensor(self.auction_item_spec_ids)[None,None,:]
+        # array of shape [batch_size, episode_length, num_auction_item_ids]
+        ais_reshp = tf.broadcast_to(ais_reshp, [*samples_shape[:2]] + [ais_reshp.shape[2]])
+        # array of shape [batch_size, episode_length, num_auction_item_ids, 1]
+        ais_reshp = tf.reshape(ais_reshp, [*ais_reshp.shape[:2]] + [-1,1])
+        # casting to same type as samples so that it can be concatenated with samples
+        ais_reshp = tf.cast(ais_reshp, samples.dtype)
+
+        # array of shape [batch_size, episode_length, num_subactions, 1 + num_dist_per_subaction]
+        chosen_actions = tf.concat([ais_reshp, samples], axis=3)
+        return chosen_actions
+
+    def loss(self, states, actions, rewards):
+        '''
+        Updates the policy.
+        :param states: An array of shape [batch_size, episode_length, new_state_size], 
+        where new_state_size is single_agent_state_size if self.partial else 
+        num_of_agents * single_agent_state_size.
+        :param actions: an array of shape [batch_size, episode_length-1, num_subactions, subaction_size].
+        :param rewards: an array of shape [batch_size, episode_length-1].
+        '''
+        # states is of episode_length, but actions is of episode_length-1.
+        # So delete the last state of each episode.
+        action_distr = self.call(states[:,:-1])
+
+        # if each subaction is [auction_item_spec_id, bid_per_item, total_limit],
+        # then slice out the 0th index to get each [bid_per_item, total_limit].
+        # Note: the length of this (i.e. 2) = self.num_dist_per_subaction.
+        subaction_dists_vals = actions[:,:,:,1:]
+
+        # get the multiplier by taking the total_limit column and dividing by bid_per_item column.
+        # (i.e. total_limit / bid_per_item = multiplier).
+        mult = subaction_dists_vals[:,:,:,-1:] / subaction_dists_vals[:,:,:,0:1]
+
+        # replace the last column with mult (i.e. total_limit column is now multiplier).
+        subaction_dists_vals = tf.where([True]*(self.num_dist_per_subaction-1) + [False], subaction_dists_vals, mult)
+
+        
+        # shape [batch_size, episode_length-1]
+        action_prbs = tf.reduce_prod(tf.reduce_prod(action_distr.prob(subaction_dists_vals), axis=3), axis=2)
+        # shape [batch_size, episode_length-1]
+        discounted_rewards = self.discount(rewards)
+        baseline = 0
+        advantage = discounted_rewards - baseline
+
+        neg_logs = -tf.math.log(action_prbs)
+        # clip min/max values to avoid infinities.
+        neg_logs = tf.clip_by_value(neg_logs, -1e9, 1e9)
+        losses = neg_logs * advantage
+        total_loss = tf.reduce_sum(losses)
+# DEBUG
+        # print("low:\n{}".format(action_distr.low))
+        # print("high:\n{}".format(action_distr.high))
+        # # print("peak:\n{}".format(action_distr.peak))
+        # # # # # # print("states 2: {}".format(states))
+        # # print("actions:\n{}".format(actions))
+        # # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
+        # print("subaction_dist_vals:\n{}".format(actions[:,:,:,1:]))
+        # print("mult:\n{}".format(mult))
+        # print("action prbs:\n{}".format(action_prbs))
+        # # # # # print(rewards)
+        # # # print("advtge:\n{}".format(discounted_rewards))
+        # # print("neg logs:\n{}".format(neg_logs))
+        # # # # print("losses: {}".format(losses))
+        # print("tot loss: {}".format(total_loss))
 #
         return total_loss
 
@@ -739,11 +1136,11 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         action_prbs = tf.reduce_prod(tf.reduce_prod(action_distr.prob(subaction_dists_vals), axis=3), axis=2)
         # shape [batch_size, episode_length-1]
         discounted_rewards = self.discount(rewards)
-        # shape [batch_size, episode_length-1, 1]
-        state_values = self.value_function(states[:,:-1])
-        # reshape to [batch_size, episode_length-1]
+        # shape [batch_size, episode_length, 1]
+        state_values = self.value_function(states)
+        # reshape to [batch_size, episode_length]
         state_values = tf.reshape(state_values, (*state_values.shape[:1],-1))
-        advantage = discounted_rewards - state_values
+        advantage = discounted_rewards - state_values[:,:-1]
 
         neg_logs = -tf.math.log(action_prbs)
         # clip min/max values to avoid infinities.
@@ -764,12 +1161,13 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         # # # # print(subaction_dists_vals)
         # # print("action prbs: {}".format(action_prbs))
         # # # # print(rewards)
-        # # print("advtge:\n{}".format(discounted_rewards))
-        # print("neg logs:\n{}".format(neg_logs))
-        print("state vals:\n{}".format(state_values))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
-        print("tot loss: {}".format(total_loss))
+        # print("disc rwds:\n{}".format(discounted_rewards))
+        # # print("neg logs:\n{}".format(neg_logs))
+        # # print("advtg:\n{}".format(advantage))
+        # print("state vals:\n{}".format(state_values))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
+        # print("tot loss: {}".format(total_loss))
 #
         return total_loss
 
@@ -968,22 +1366,26 @@ class AC_MarketEnv_Continuous_v1(AbstractPolicy, tf.keras.Model):
         critic_loss = tf.reduce_sum((advantage)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
 # DEBUG
-        # # # # print(self.choices)
+        # # # # # print(self.choices)
         # print("loc:\n{}".format(action_distr.loc))
-        # print("scale: {}".format(action_distr.scale))
-        # print("low: {}".format(action_distr.low))
-        # print("high: {}".format(action_distr.high))
-        # # # # # print("states 2: {}".format(states))
-        # print("actions:\n{}".format(actions))
-        # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
-        # # # # print(subaction_dists_vals)
-        # # print("action prbs: {}".format(action_prbs))
-        # # # # print(rewards)
-        # # print("advtge:\n{}".format(discounted_rewards))
-        # print("neg logs:\n{}".format(neg_logs))
+        # # print("scale: {}".format(action_distr.scale))
+        # # print("low: {}".format(action_distr.low))
+        # # print("high: {}".format(action_distr.high))
+        # # # # # # print("states 2: {}".format(states))
+        # # print("actions:\n{}".format(actions))
+        # # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
+        # # # # # print(subaction_dists_vals)
+        # # # print("action prbs: {}".format(action_prbs))
+        # # # # # print(rewards)
+        # # print("neg logs:\n{}".format(neg_logs))
         # print("rwds:\n{}".format(rewards))
-        # print("targets:\n{}".format(targets))
-        # print("state vals:\n{}".format(state_values))
+        # discounted_rewards = self.discount(rewards)
+        # print("disc. rwds:\n{}".format(discounted_rewards))
+        # # print("targets:\n{}".format(targets))
+        # # print("state vals:\n{}".format(state_values))
+        # # # print("r_error:\n{}".format(discounted_rewards - state_values[:,:-1]))
+        # print("td_error:\n{}".format(advantage))
+        # print("r_loss: {}".format(tf.reduce_sum(neg_logs * tf.stop_gradient(discounted_rewards))))
         # print("actor_loss: {}".format(actor_loss))
         # print("critic_loss: {}".format(critic_loss))
         # print("tot loss: {}".format(total_loss))
@@ -1199,10 +1601,10 @@ class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
         # # # # print(rewards)
         # # print("advtge:\n{}".format(discounted_rewards))
         # print("neg logs:\n{}".format(neg_logs))
-        print("q_state vals:\n{}".format(q_state_values))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
-        print("tot loss: {}".format(total_loss))
+        # print("q_state vals:\n{}".format(q_state_values))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
+        # print("tot loss: {}".format(total_loss))
 #
         return total_loss
 
