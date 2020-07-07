@@ -398,6 +398,7 @@ class Experiment:
         state_size = 6
         agents[0].policy.build( (NUM_EPOCHS, num_of_trajs, len(agents) * state_size) )
         agents[0].policy.summary()
+        print("agent policies: {}".format([agent.policy for agent in env.agents]))
         print("optimizer: {}, learning_rate: {}".format(agents[0].policy.optimizer, agents[0].policy.learning_rate))
 
         start = time.time()
@@ -467,6 +468,7 @@ class Experiment:
         # state_size = 6
         # agents[0].policy.build( (NUM_EPOCHS, num_of_trajs, len(agents) * state_size) )
         # agents[0].policy.summary()
+        print("agent policies: {}".format([agent.policy for agent in env.agents]))
         print("optimizer: {}, learning_rate: {}".format(agents[0].policy.optimizer, agents[0].policy.learning_rate))
 
         start = time.time()
