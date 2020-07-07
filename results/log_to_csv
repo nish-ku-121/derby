@@ -1,0 +1,67 @@
+#!/bin/bash
+
+
+
+## ARGUMENTS ##
+
+log_file="$1"
+
+
+if [ $# -lt 1 ]; then
+    echo "Not enough arguments provided"
+    echo 'Usage: ' "`basename "$0"`" '<log file>'
+    exit 1
+fi
+
+echo '============= START ============='
+
+experiment="`grep -i "running experiment" "${log_file}" | grep -io "exp_[[:alnum:]]*"`"
+
+policies="`grep -i "agent policies:" "${log_file}" | grep -io "derby.core.policies.[^[:space:]/]*" | tr "\n" "," | sed "s/derby.core.policies.//g" | sed "s/,$//"`"
+
+if [[ -z "${policies}" ]]
+then
+    if [[ "${experiment}" == "exp_6" ]]
+    then
+        policies="REINFORCE_MarketEnv_Continuous_Gaussian,DummyPolicy1"
+    elif [[ "$experiment" == "exp_7" ]]
+    then
+        policies="REINFORCE_Baseline_MarketEnv_Continuous_Gaussian,DummyPolicy1"
+    fi
+fi
+
+# Rename the policies to be clear and concise
+policies="`echo "${policies}" | sed "s/REINFORCE_MarketEnv_Continuous_Gaussian/REINFORCE__Gaussian__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/REINFORCE_MarketEnv_Continuous_Uniform/REINFORCE__Uniform__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/REINFORCE_MarketEnv_Continuous_Triangular/REINFORCE__Triangular__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/REINFORCE_Baseline_MarketEnv_Continuous_Gaussian/REINFORCE_Baseline__Guassian__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/REINFORCE_Baseline_Triangular_MarketEnv_Continuous/REINFORCE_Baseline__Triangular__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_MarketEnv_Continuous_v1/AC_TD__Gaussian__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_TD_Triangular_MarketEnv_Continuous/AC_TD__Triangular__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_MarketEnv_Continuous_v2/AC_Q__Gaussian__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_Q_Triangular_MarketEnv_Continuous/AC_Q__Triangular__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_MarketEnv_Continuous_sarsa/AC_SARSA__Gaussian__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_SARSA_Triangular_MarketEnv_Continuous/AC_SARSA__Gaussian__MarketEnv_Continuous/g"`"
+
+policies="`echo "${policies}" | sed "s/__marketenv_continuous//gI"`"
+
+params="`grep "days per traj:" "${log_file}" | sed "s/days per traj://g" | sed "s/trajs per epoch://g" | sed "s/ EPOCHS://g" | tr -d " " | sed "s/,/_/g"`"
+
+lr="`grep -o "learning_rate:.*" "${log_file}" | sed "s/learning_rate://g" | tr -d " "`"
+
+TIMESTAMP=`date "+%Y%m%d%H%M%S"`
+new_file_name="${experiment}__${params}__${lr}__${TIMESTAMP}"
+csv_file="${new_file_name}.csv"
+echo "${policies}" > ${csv_file}
+
+grep "epoch:" ${log_file} | grep -o "\[.*\]" | tr -d "[]()'" | sed "s/agent[0-9]*,//g" | tr -d " " >> ${csv_file}
+if [[ -n "`grep "Traceback (most recent call last)" "${log_file}"`" ]]
+then
+    echo "FAILED" >> "${csv_file}"
+fi
+
+copy_file="${new_file_name}.log"
+cp "${log_file}" "${copy_file}"
+echo "done: ${log_file} => ${copy_file}, ${csv_file}"
+
+echo '============ = END = ============'
