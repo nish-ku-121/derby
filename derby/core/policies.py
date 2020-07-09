@@ -117,13 +117,18 @@ class AbstractPolicy(ABC):
         return discounted_rewards
 
 
-class DummyPolicy1(AbstractPolicy):
+class FixedBidPolicy(AbstractPolicy):
 
     def __init__(self, auction_item_spec, bid_per_item, total_limit):
         super().__init__()
         self.auction_item_spec = auction_item_spec
         self.bid_per_item = bid_per_item
         self.total_limit = total_limit
+
+    def __repr__(self):
+        return "{}(auction_item_spec: {}, bid_per_item: {}, total_limit: {})".format(self.__class__.__name__, 
+                                                                       self.auction_item_spec, self.bid_per_item, 
+                                                                       self.total_limit)
 
     def states_fold_type(self):
         return AbstractEnvironment.FOLD_TYPE_SINGLE
@@ -139,7 +144,11 @@ class DummyPolicy1(AbstractPolicy):
         for i in range(states.shape[0]):
             actions_i = []
             for j in range(states.shape[1]):
-                action = [ [self.auction_item_spec.uid, self.bid_per_item, self.total_limit] ]
+                state_i_j = states[i][j]
+                if isinstance(state_i_j, CampaignBidderState):
+                    action = [ Bid(agent, auction_item_spec, bid_per_item=bpi, total_limit=lim) ]
+                else:
+                    action = [ [self.auction_item_spec.uid, self.bid_per_item, self.total_limit] ]
                 actions_i.append(action)
             actions.append(actions_i)
         actions = np.array(actions)
@@ -153,45 +162,6 @@ class DummyPolicy1(AbstractPolicy):
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
         pass
-
-
-class DummyPolicy2(AbstractPolicy):
-
-    def __init__(self, auction_item_spec, bid_per_item, total_limit):
-        super().__init__()
-        self.auction_item_spec = auction_item_spec
-        self.bid_per_item = bid_per_item
-        self.total_limit = total_limit
-
-    def states_fold_type(self):
-        return AbstractEnvironment.FOLD_TYPE_SINGLE
-
-    def actions_fold_type(self):
-        return AbstractEnvironment.FOLD_TYPE_SINGLE
-
-    def rewards_fold_type(self):
-        return AbstractEnvironment.FOLD_TYPE_SINGLE
-    
-    def call(self, states):
-        agent = self.agent
-        auction_item_spec = self.auction_item_spec
-        bpi = self.bid_per_item
-        lim = self.total_limit
-        actions = [] 
-        for i in range(states.shape[0]):
-            actions_i = []
-            for j in range(states.shape[1]):
-                action = [ Bid(agent, auction_item_spec, bid_per_item=bpi, total_limit=lim) ]
-                actions_i.append(action)
-            actions.append(actions_i)
-        actions = np.array(actions)
-        return actions
-
-    def choose_actions(self, call_output):
-        return call_output
-
-    def loss(self, states, actions, rewards):
-        return 0
 
 
 class BudgetPerReachPolicy(AbstractPolicy):
@@ -251,6 +221,72 @@ class BudgetPerReachPolicy(AbstractPolicy):
         :param rewards: an array of shape [batch_size, episode_length].
         '''
         return 0
+
+    def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
+        pass
+
+
+class StepPolicy(AbstractPolicy):
+
+    def __init__(self, start_bid, step_per_day):
+        super().__init__()
+        self.start_bid = start_bid
+        self.step_per_day = step_per_day
+
+    def __repr__(self):
+        return "{}(start_bid: {}, step_per_day: {})".format(self.__class__.__name__, 
+                                                   self.start_bid, self.step_per_day)
+
+    def states_fold_type(self):
+        return AbstractEnvironment.FOLD_TYPE_SINGLE
+
+    def actions_fold_type(self):
+        return AbstractEnvironment.FOLD_TYPE_SINGLE
+
+    def rewards_fold_type(self):
+        return AbstractEnvironment.FOLD_TYPE_SINGLE
+
+    def call(self, states):
+        '''
+        :param states: an array of shape [batch_size, episode_length, state_size].
+        :return: array of shape [batch_size, episode_length] representing the actions to take.
+        '''
+        actions = []
+        for i in range(states.shape[0]):
+            actions_i = []
+            for j in range(states.shape[1]):
+                state_i_j = states[i][j]
+                if isinstance(state_i_j, CampaignBidderState):
+                    day = self.timestep
+                    bpr = self.start_bid + day*self.step_per_day
+                    if state_i_j.impressions >= state_i_j.campaign.reach:
+                        bpr = 0.0
+                    auction_item_spec = state_i_j.campaign.target
+                    action = [ Bid(self.agent, auction_item_spec, bid_per_item=bpr, total_limit=bpr) ]
+                else:
+                    reach = state_i_j[0]
+                    budget = state_i_j[1]
+                    auction_item_spec = state_i_j[2]
+                    spend = state_i_j[3]
+                    impressions = state_i_j[4]
+                    day = state_i_j[5]
+                    bpr = self.start_bid + day*self.step_per_day
+                    if (impressions >= reach):
+                        bpr = 0.0
+                    action = [ [auction_item_spec, bpr, bpr] ]
+                actions_i.append(action)
+            actions.append(actions_i)
+        actions = np.array(actions)
+        return actions
+
+    def choose_actions(self, call_output):
+        return call_output
+
+    def loss(self, states, actions, rewards):
+        return 0
+
+    def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
+        pass
 
 
 '''
