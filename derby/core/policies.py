@@ -117,13 +117,18 @@ class AbstractPolicy(ABC):
         return discounted_rewards
 
 
-class DummyPolicy1(AbstractPolicy):
+class FixedBidPolicy(AbstractPolicy):
 
     def __init__(self, auction_item_spec, bid_per_item, total_limit):
         super().__init__()
         self.auction_item_spec = auction_item_spec
         self.bid_per_item = bid_per_item
         self.total_limit = total_limit
+
+    def __repr__(self):
+        return "{}(auction_item_spec: {}, bid_per_item: {}, total_limit: {})".format(self.__class__.__name__, 
+                                                                       self.auction_item_spec, self.bid_per_item, 
+                                                                       self.total_limit)
 
     def states_fold_type(self):
         return AbstractEnvironment.FOLD_TYPE_SINGLE
@@ -139,7 +144,11 @@ class DummyPolicy1(AbstractPolicy):
         for i in range(states.shape[0]):
             actions_i = []
             for j in range(states.shape[1]):
-                action = [ [self.auction_item_spec.uid, self.bid_per_item, self.total_limit] ]
+                state_i_j = states[i][j]
+                if isinstance(state_i_j, CampaignBidderState):
+                    action = [ Bid(agent, auction_item_spec, bid_per_item=bpi, total_limit=lim) ]
+                else:
+                    action = [ [self.auction_item_spec.uid, self.bid_per_item, self.total_limit] ]
                 actions_i.append(action)
             actions.append(actions_i)
         actions = np.array(actions)
@@ -153,45 +162,6 @@ class DummyPolicy1(AbstractPolicy):
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
         pass
-
-
-class DummyPolicy2(AbstractPolicy):
-
-    def __init__(self, auction_item_spec, bid_per_item, total_limit):
-        super().__init__()
-        self.auction_item_spec = auction_item_spec
-        self.bid_per_item = bid_per_item
-        self.total_limit = total_limit
-
-    def states_fold_type(self):
-        return AbstractEnvironment.FOLD_TYPE_SINGLE
-
-    def actions_fold_type(self):
-        return AbstractEnvironment.FOLD_TYPE_SINGLE
-
-    def rewards_fold_type(self):
-        return AbstractEnvironment.FOLD_TYPE_SINGLE
-    
-    def call(self, states):
-        agent = self.agent
-        auction_item_spec = self.auction_item_spec
-        bpi = self.bid_per_item
-        lim = self.total_limit
-        actions = [] 
-        for i in range(states.shape[0]):
-            actions_i = []
-            for j in range(states.shape[1]):
-                action = [ Bid(agent, auction_item_spec, bid_per_item=bpi, total_limit=lim) ]
-                actions_i.append(action)
-            actions.append(actions_i)
-        actions = np.array(actions)
-        return actions
-
-    def choose_actions(self, call_output):
-        return call_output
-
-    def loss(self, states, actions, rewards):
-        return 0
 
 
 class BudgetPerReachPolicy(AbstractPolicy):
@@ -251,6 +221,72 @@ class BudgetPerReachPolicy(AbstractPolicy):
         :param rewards: an array of shape [batch_size, episode_length].
         '''
         return 0
+
+    def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
+        pass
+
+
+class StepPolicy(AbstractPolicy):
+
+    def __init__(self, start_bid, step_per_day):
+        super().__init__()
+        self.start_bid = start_bid
+        self.step_per_day = step_per_day
+
+    def __repr__(self):
+        return "{}(start_bid: {}, step_per_day: {})".format(self.__class__.__name__, 
+                                                   self.start_bid, self.step_per_day)
+
+    def states_fold_type(self):
+        return AbstractEnvironment.FOLD_TYPE_SINGLE
+
+    def actions_fold_type(self):
+        return AbstractEnvironment.FOLD_TYPE_SINGLE
+
+    def rewards_fold_type(self):
+        return AbstractEnvironment.FOLD_TYPE_SINGLE
+
+    def call(self, states):
+        '''
+        :param states: an array of shape [batch_size, episode_length, state_size].
+        :return: array of shape [batch_size, episode_length] representing the actions to take.
+        '''
+        actions = []
+        for i in range(states.shape[0]):
+            actions_i = []
+            for j in range(states.shape[1]):
+                state_i_j = states[i][j]
+                if isinstance(state_i_j, CampaignBidderState):
+                    day = self.timestep
+                    bpr = self.start_bid + day*self.step_per_day
+                    if state_i_j.impressions >= state_i_j.campaign.reach:
+                        bpr = 0.0
+                    auction_item_spec = state_i_j.campaign.target
+                    action = [ Bid(self.agent, auction_item_spec, bid_per_item=bpr, total_limit=bpr) ]
+                else:
+                    reach = state_i_j[0]
+                    budget = state_i_j[1]
+                    auction_item_spec = state_i_j[2]
+                    spend = state_i_j[3]
+                    impressions = state_i_j[4]
+                    day = state_i_j[5]
+                    bpr = self.start_bid + day*self.step_per_day
+                    if (impressions >= reach):
+                        bpr = 0.0
+                    action = [ [auction_item_spec, bpr, bpr] ]
+                actions_i.append(action)
+            actions.append(actions_i)
+        actions = np.array(actions)
+        return actions
+
+    def choose_actions(self, call_output):
+        return call_output
+
+    def loss(self, states, actions, rewards):
+        return 0
+
+    def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
+        pass
 
 
 '''
@@ -345,19 +381,6 @@ class DummyREINFORCE(AbstractPolicy, tf.keras.Model):
         neg_logs = -tf.math.log(action_prbs)
         losses = neg_logs * discounted_rewards
         total_loss = tf.reduce_sum(losses)
-# DEBUG
-        # # print(self.choices)
-        # print(action_distr)
-        # print(states)
-        # print(actions)
-        # # print(action_choices)
-        # # print(action_prbs)
-        # # print(rewards)
-        # print(discounted_rewards)
-        # # print(neg_logs)
-        # # print(losses)
-        # print(total_loss)
-#
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -368,9 +391,9 @@ class DummyREINFORCE(AbstractPolicy, tf.keras.Model):
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
+class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -383,15 +406,14 @@ class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
-        self.layer1_size = 1 #50
-        self.layer1_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
-        self.mu_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
-        self.sigma_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
+        self.layer1_size = 1
+        self.layer1_ker_init = None
+        self.mu_ker_init = None
+        self.sigma_ker_init = None
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
         
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
@@ -402,6 +424,12 @@ class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         self.sigma_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, kernel_initializer=self.sigma_ker_init, use_bias=False, activation=None, dtype='float64')
         
 
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
+    
     def states_fold_type(self):
         if self.is_partial:
             return AbstractEnvironment.FOLD_TYPE_SINGLE
@@ -447,32 +475,21 @@ class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
         # so that it can be used as a multiplier.
         output_mus = output_mus + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_mus.dtype)
+        
         # create column that is 1st column multiplied by the multiplier 
         # (i.e. bid_per_item multiplied by a multiplier).
         mult = output_mus[:,:,:,0:1] * output_mus[:,:,:,-1:]
+        
         # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
-        output_mus = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_mus, mult)
         # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
         # than the bid_per_item dist, which 2) makes it unlikely that sampled 
         # total_limit is significantly lower than the sampled bid_per_item.
-
-# DEBUG
-        # print("call states: {}".format(states))
-        # print("dense1 weights: {}".format(self.dense1.kernel))
-        # print("mus weights: {}".format(self.mu_layer.kernel))
-        # print("output: {}".format(output))
-        # print("mus: {}".format(output_mus))
-        # print("sigmas: {}".format(output_sigmas))
-#
+        output_mus = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_mus, mult)
 
         # A distribution which (when sampled) returns an array of shape
         # output_mus.shape, i.e. [batch_size, episode_length, mu_layer_output_size].
         # NOTE: make sure loc and scale are float tensors so that they're compatible 
         # with tfp.distributions.Normal. Otherwise it will throw an error.
-        # dist = tfp.distributions.TruncatedNormal(loc=output_mus, 
-                                                 # scale=output_sigmas,
-                                                 # low=output_mus - output_sigmas,
-                                                 # high=output_mus + output_sigmas)
         dist = tfp.distributions.Normal(loc=output_mus, scale=output_sigmas)
 
         return dist
@@ -505,9 +522,6 @@ class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         # array of shape [batch_size, episode_length, num_subactions, 1 + num_dist_per_subaction]
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
-# # DEBUG
-#         print("chosen_actions:\n{}".format(chosen_actions))
-# #
         return chosen_actions
 
     def loss(self, states, actions, rewards):
@@ -540,23 +554,6 @@ class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         neg_logs = tf.clip_by_value(neg_logs, -1e9, 1e9)
         losses = neg_logs * advantage
         total_loss = tf.reduce_sum(losses)
-# DEBUG
-        # # # # print(self.choices)
-        # print("loc:\n{}".format(action_distr.loc))
-        # print("scale: {}".format(action_distr.scale))
-        # print("low: {}".format(action_distr.low))
-        # print("high: {}".format(action_distr.high))
-        # # # # # print("states 2: {}".format(states))
-        # print("actions:\n{}".format(actions))
-        # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
-        # # # # print(subaction_dists_vals)
-        # # print("action prbs: {}".format(action_prbs))
-        # # # # print(rewards)
-        # # print("advtge:\n{}".format(discounted_rewards))
-        # print("neg logs:\n{}".format(neg_logs))
-        # # # print("losses: {}".format(losses))
-        # print("tot loss: {}".format(total_loss))
-#
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -565,15 +562,11 @@ class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         else:
             gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-# DEBUG
-            # print("grads: {}".format(gradients))
-            # print("weights: {}".format(self.trainable_variables))
-#
 
 
-class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
+class REINFORCE_Uniform_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -586,13 +579,12 @@ class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
-        self.layer1_size = 1 #50
-        self.layer1_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
+        self.layer1_size = 1
+        self.layer1_ker_init = None
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
         
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
@@ -602,6 +594,12 @@ class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
         self.low_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, use_bias=False, activation=None, dtype='float64')
         self.offset_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, use_bias=False, activation=None, dtype='float64')
         
+
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
 
     def states_fold_type(self):
         if self.is_partial:
@@ -652,15 +650,6 @@ class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
         # make highs = lows + offsets, so that they are always higher than lows.
         output_highs = output_lows + output_offsets
 
-# DEBUG
-        # print("call states: {}".format(states))
-        # print("dense1 weights: {}".format(self.dense1.kernel))
-        # print("mus weights: {}".format(self.mu_layer.kernel))
-        # print("output: {}".format(output))
-        # print("lows: {}".format(output_lows))
-        # print("highs: {}".format(output_highs))
-#
-
         # A distribution which (when sampled) returns an array of shape
         # output_lows.shape, i.e. [batch_size, episode_length, low_layer_output_size].
         dist = tfp.distributions.Uniform(low=output_lows, high=output_highs)
@@ -696,9 +685,6 @@ class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
 
         # array of shape [batch_size, episode_length, num_subactions, 1 + num_dist_per_subaction]
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
-# # DEBUG
-#         print("chosen_actions:\n{}".format(chosen_actions))
-# #
         return chosen_actions
 
     def loss(self, states, actions, rewards):
@@ -725,7 +711,6 @@ class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
 
         # replace the last column with mult (i.e. total_limit column is now multiplier).
         subaction_dists_vals = tf.where([True]*(self.num_dist_per_subaction-1) + [False], subaction_dists_vals, mult)
-
         
         # shape [batch_size, episode_length-1]
         action_prbs = tf.reduce_prod(tf.reduce_prod(action_distr.prob(subaction_dists_vals), axis=3), axis=2)
@@ -739,20 +724,6 @@ class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
         neg_logs = tf.clip_by_value(neg_logs, -1e9, 1e9)
         losses = neg_logs * advantage
         total_loss = tf.reduce_sum(losses)
-# DEBUG
-        # print("low:\n{}".format(action_distr.low))
-        # print("high:\n{}".format(action_distr.high))
-        # # # # # print("states 2: {}".format(states))
-        # print("actions:\n{}".format(actions))
-        # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
-        # # # # print(subaction_dists_vals)
-        # print("action prbs:\n{}".format(action_prbs))
-        # # # # print(rewards)
-        # # print("advtge:\n{}".format(discounted_rewards))
-        # print("neg logs:\n{}".format(neg_logs))
-        # # # print("losses: {}".format(losses))
-        # print("tot loss: {}".format(total_loss))
-#
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -761,15 +732,11 @@ class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
         else:
             gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-# DEBUG
-            # print("grads: {}".format(gradients))
-            # print("weights: {}".format(self.trainable_variables))
-#
 
 
-class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
+class REINFORCE_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -782,13 +749,12 @@ class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
-        self.layer1_size = 1 #50
-        self.layer1_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
+        self.layer1_size = 1
+        self.layer1_ker_init = None
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
         
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
@@ -798,6 +764,12 @@ class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
         self.low_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, use_bias=False, activation=None, dtype='float64')
         self.offset_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, use_bias=False, activation=None, dtype='float64')
         self.offset2_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, use_bias=False, activation=None, dtype='float64')
+
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
 
     def states_fold_type(self):
         if self.is_partial:
@@ -849,14 +821,6 @@ class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
         # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
         # so that it can be used as a multiplier.
         output_lows = output_lows + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_lows.dtype)
-        # # create column that is 1st column multiplied by the multiplier 
-        # # (i.e. bid_per_item * multiplier).
-        # mult = output_lows[:,:,:,0:1] * output_lows[:,:,:,-1:]
-        # # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
-        # output_lows = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_lows, mult)
-        # # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
-        # # than the bid_per_item dist, which 2) makes it unlikely that sampled 
-        # # total_limit is significantly lower than the sampled bid_per_item.
 
         # make peak = low + offset, so that they are always higher than low.
         output_peaks = output_lows + output_offsets
@@ -925,7 +889,6 @@ class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
         # replace the last column with mult (i.e. total_limit column is now multiplier).
         subaction_dists_vals = tf.where([True]*(self.num_dist_per_subaction-1) + [False], subaction_dists_vals, mult)
 
-        
         # shape [batch_size, episode_length-1]
         action_prbs = tf.reduce_prod(tf.reduce_prod(action_distr.prob(subaction_dists_vals), axis=3), axis=2)
         # shape [batch_size, episode_length-1]
@@ -938,22 +901,6 @@ class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
         neg_logs = tf.clip_by_value(neg_logs, -1e9, 1e9)
         losses = neg_logs * advantage
         total_loss = tf.reduce_sum(losses)
-# DEBUG
-        # print("low:\n{}".format(action_distr.low))
-        # print("high:\n{}".format(action_distr.high))
-        # # print("peak:\n{}".format(action_distr.peak))
-        # # # # # # print("states 2: {}".format(states))
-        # # print("actions:\n{}".format(actions))
-        # # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
-        # print("subaction_dist_vals:\n{}".format(actions[:,:,:,1:]))
-        # print("mult:\n{}".format(mult))
-        # print("action prbs:\n{}".format(action_prbs))
-        # # # # # print(rewards)
-        # # # print("advtge:\n{}".format(discounted_rewards))
-        # # print("neg logs:\n{}".format(neg_logs))
-        # # # # print("losses: {}".format(losses))
-        # print("tot loss: {}".format(total_loss))
-#
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -962,15 +909,11 @@ class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
         else:
             gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-# DEBUG
-            # print("grads: {}".format(gradients))
-            # print("weights: {}".format(self.trainable_variables))
-#
 
 
-class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
+class REINFORCE_Baseline_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -983,15 +926,14 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
-        self.layer1_size = 1 #50
-        self.layer1_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
-        self.mu_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
-        self.sigma_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
+        self.layer1_size = 1
+        self.layer1_ker_init = None
+        self.mu_ker_init = None
+        self.sigma_ker_init = None
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
         
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
@@ -1005,6 +947,12 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         self.critic_dense1 = tf.keras.layers.Dense(self.critic_layer1_size, activation='relu', dtype='float64')
         self.critic_dense2 = tf.keras.layers.Dense(1, dtype='float64')
 
+
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
 
     def states_fold_type(self):
         if self.is_partial:
@@ -1051,14 +999,16 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
         # so that it can be used as a multiplier.
         output_mus = output_mus + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_mus.dtype)
+        
         # create column that is 1st column multiplied by the multiplier 
         # (i.e. bid_per_item multiplied by a multiplier).
         mult = output_mus[:,:,:,0:1] * output_mus[:,:,:,-1:]
+        
         # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
-        output_mus = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_mus, mult)
         # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
         # than the bid_per_item dist, which 2) makes it unlikely that sampled 
         # total_limit is significantly lower than the sampled bid_per_item.
+        output_mus = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_mus, mult)
 
         # A distribution which (when sampled) returns an array of shape
         # output_mus.shape, i.e. [batch_size, episode_length, mu_layer_output_size].
@@ -1109,9 +1059,6 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         # array of shape [batch_size, episode_length, num_subactions, 1 + num_dist_per_subaction]
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
-# # DEBUG
-#         print("chosen_actions:\n{}".format(chosen_actions))
-# #
         return chosen_actions
 
     def loss(self, states, actions, rewards):
@@ -1149,26 +1096,6 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         actor_loss = tf.reduce_sum(losses)
         critic_loss = tf.reduce_sum((advantage)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
-# DEBUG
-        # # # # print(self.choices)
-        # print("loc:\n{}".format(action_distr.loc))
-        # print("scale: {}".format(action_distr.scale))
-        # print("low: {}".format(action_distr.low))
-        # print("high: {}".format(action_distr.high))
-        # # # # # print("states 2: {}".format(states))
-        # print("actions:\n{}".format(actions))
-        # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
-        # # # # print(subaction_dists_vals)
-        # # print("action prbs: {}".format(action_prbs))
-        # # # # print(rewards)
-        # print("disc rwds:\n{}".format(discounted_rewards))
-        # # print("neg logs:\n{}".format(neg_logs))
-        # # print("advtg:\n{}".format(advantage))
-        # print("state vals:\n{}".format(state_values))
-        # print("actor_loss: {}".format(actor_loss))
-        # print("critic_loss: {}".format(critic_loss))
-        # print("tot loss: {}".format(total_loss))
-#
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -1177,15 +1104,11 @@ class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         else:
             gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-# DEBUG
-            # print("grads: {}".format(gradients))
-            # print("weights: {}".format(self.trainable_variables))
-#
 
 
 class REINFORCE_Baseline_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -1198,10 +1121,9 @@ class REINFORCE_Baseline_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.kera
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
         self.layer1_size = 1
         self.layer1_ker_init = None
@@ -1219,6 +1141,12 @@ class REINFORCE_Baseline_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.kera
         self.critic_dense1 = tf.keras.layers.Dense(self.critic_layer1_size, activation='relu', dtype='float64')
         self.critic_dense2 = tf.keras.layers.Dense(1, dtype='float64')
 
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
+
     def states_fold_type(self):
         if self.is_partial:
             return AbstractEnvironment.FOLD_TYPE_SINGLE
@@ -1269,14 +1197,6 @@ class REINFORCE_Baseline_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.kera
         # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
         # so that it can be used as a multiplier.
         output_lows = output_lows + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_lows.dtype)
-        # # create column that is 1st column multiplied by the multiplier 
-        # # (i.e. bid_per_item * multiplier).
-        # mult = output_lows[:,:,:,0:1] * output_lows[:,:,:,-1:]
-        # # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
-        # output_lows = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_lows, mult)
-        # # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
-        # # than the bid_per_item dist, which 2) makes it unlikely that sampled 
-        # # total_limit is significantly lower than the sampled bid_per_item.
 
         # make peak = low + offset, so that they are always higher than low.
         output_peaks = output_lows + output_offsets
@@ -1357,7 +1277,6 @@ class REINFORCE_Baseline_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.kera
 
         # replace the last column with mult (i.e. total_limit column is now multiplier).
         subaction_dists_vals = tf.where([True]*(self.num_dist_per_subaction-1) + [False], subaction_dists_vals, mult)
-
         
         # shape [batch_size, episode_length-1]
         action_prbs = tf.reduce_prod(tf.reduce_prod(action_distr.prob(subaction_dists_vals), axis=3), axis=2)
@@ -1386,9 +1305,9 @@ class REINFORCE_Baseline_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.kera
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class AC_MarketEnv_Continuous_v1(AbstractPolicy, tf.keras.Model):
+class AC_TD_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -1401,15 +1320,14 @@ class AC_MarketEnv_Continuous_v1(AbstractPolicy, tf.keras.Model):
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
-        self.layer1_size = 1 #50
-        self.layer1_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
-        self.mu_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
-        self.sigma_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
+        self.layer1_size = 1
+        self.layer1_ker_init = None
+        self.mu_ker_init = None
+        self.sigma_ker_init = None
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
         
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
@@ -1423,6 +1341,11 @@ class AC_MarketEnv_Continuous_v1(AbstractPolicy, tf.keras.Model):
         self.critic_dense1 = tf.keras.layers.Dense(self.critic_layer1_size, activation='relu', dtype='float64')
         self.critic_dense2 = tf.keras.layers.Dense(1, dtype='float64')
 
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
 
     def states_fold_type(self):
         if self.is_partial:
@@ -1469,14 +1392,16 @@ class AC_MarketEnv_Continuous_v1(AbstractPolicy, tf.keras.Model):
         # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
         # so that it can be used as a multiplier.
         output_mus = output_mus + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_mus.dtype)
+        
         # create column that is 1st column multiplied by the multiplier 
         # (i.e. bid_per_item multiplied by a multiplier).
         mult = output_mus[:,:,:,0:1] * output_mus[:,:,:,-1:]
+        
         # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
-        output_mus = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_mus, mult)
         # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
         # than the bid_per_item dist, which 2) makes it unlikely that sampled 
         # total_limit is significantly lower than the sampled bid_per_item.
+        output_mus = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_mus, mult)
 
         # A distribution which (when sampled) returns an array of shape
         # output_mus.shape, i.e. [batch_size, episode_length, mu_layer_output_size].
@@ -1527,9 +1452,6 @@ class AC_MarketEnv_Continuous_v1(AbstractPolicy, tf.keras.Model):
 
         # array of shape [batch_size, episode_length, num_subactions, 1 + num_dist_per_subaction]
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
-# # DEBUG
-#         print("chosen_actions:\n{}".format(chosen_actions))
-# #
         return chosen_actions
 
     def loss(self, states, actions, rewards):
@@ -1568,31 +1490,6 @@ class AC_MarketEnv_Continuous_v1(AbstractPolicy, tf.keras.Model):
         actor_loss = tf.reduce_sum(losses)
         critic_loss = tf.reduce_sum((advantage)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
-# DEBUG
-        # # # # # print(self.choices)
-        # print("loc:\n{}".format(action_distr.loc))
-        # # print("scale: {}".format(action_distr.scale))
-        # # print("low: {}".format(action_distr.low))
-        # # print("high: {}".format(action_distr.high))
-        # # # # # # print("states 2: {}".format(states))
-        # # print("actions:\n{}".format(actions))
-        # # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
-        # # # # # print(subaction_dists_vals)
-        # # # print("action prbs: {}".format(action_prbs))
-        # # # # # print(rewards)
-        # # print("neg logs:\n{}".format(neg_logs))
-        # print("rwds:\n{}".format(rewards))
-        # discounted_rewards = self.discount(rewards)
-        # print("disc. rwds:\n{}".format(discounted_rewards))
-        # # print("targets:\n{}".format(targets))
-        # # print("state vals:\n{}".format(state_values))
-        # # # print("r_error:\n{}".format(discounted_rewards - state_values[:,:-1]))
-        # print("td_error:\n{}".format(advantage))
-        # print("r_loss: {}".format(tf.reduce_sum(neg_logs * tf.stop_gradient(discounted_rewards))))
-        # print("actor_loss: {}".format(actor_loss))
-        # print("critic_loss: {}".format(critic_loss))
-        # print("tot loss: {}".format(total_loss))
-#
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -1601,15 +1498,11 @@ class AC_MarketEnv_Continuous_v1(AbstractPolicy, tf.keras.Model):
         else:
             gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-# DEBUG
-            # print("grads: {}".format(gradients))
-            # print("weights: {}".format(self.trainable_variables))
-#
 
 
 class AC_TD_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -1622,13 +1515,12 @@ class AC_TD_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
-        self.layer1_size = 1 #50
-        self.layer1_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
+        self.layer1_size = 1
+        self.layer1_ker_init = None
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
         
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
@@ -1642,6 +1534,12 @@ class AC_TD_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         self.critic_layer1_size = 6
         self.critic_dense1 = tf.keras.layers.Dense(self.critic_layer1_size, activation='relu', dtype='float64')
         self.critic_dense2 = tf.keras.layers.Dense(1, dtype='float64')
+
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
 
     def states_fold_type(self):
         if self.is_partial:
@@ -1693,14 +1591,6 @@ class AC_TD_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
         # so that it can be used as a multiplier.
         output_lows = output_lows + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_lows.dtype)
-        # # create column that is 1st column multiplied by the multiplier 
-        # # (i.e. bid_per_item * multiplier).
-        # mult = output_lows[:,:,:,0:1] * output_lows[:,:,:,-1:]
-        # # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
-        # output_lows = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_lows, mult)
-        # # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
-        # # than the bid_per_item dist, which 2) makes it unlikely that sampled 
-        # # total_limit is significantly lower than the sampled bid_per_item.
 
         # make peak = low + offset, so that they are always higher than low.
         output_peaks = output_lows + output_offsets
@@ -1781,8 +1671,7 @@ class AC_TD_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         # replace the last column with mult (i.e. total_limit column is now multiplier).
         subaction_dists_vals = tf.where([True]*(self.num_dist_per_subaction-1) + [False], subaction_dists_vals, mult)
-
-        
+      
         # shape [batch_size, episode_length-1]
         action_prbs = tf.reduce_prod(tf.reduce_prod(action_distr.prob(subaction_dists_vals), axis=3), axis=2)
         # shape [batch_size, episode_length, 1]
@@ -1811,9 +1700,9 @@ class AC_TD_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
+class AC_Q_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -1826,15 +1715,14 @@ class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
-        self.layer1_size = 1 #50
-        self.layer1_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
-        self.mu_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
-        self.sigma_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
+        self.layer1_size = 1
+        self.layer1_ker_init = None
+        self.mu_ker_init = None
+        self.sigma_ker_init = None
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
         
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
@@ -1848,6 +1736,11 @@ class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
         self.critic_dense1 = tf.keras.layers.Dense(self.critic_layer1_size, activation='relu', dtype='float64')
         self.critic_dense2 = tf.keras.layers.Dense(1, dtype='float64')
 
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
 
     def states_fold_type(self):
         if self.is_partial:
@@ -1894,14 +1787,16 @@ class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
         # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
         # so that it can be used as a multiplier.
         output_mus = output_mus + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_mus.dtype)
+        
         # create column that is 1st column multiplied by the multiplier 
         # (i.e. bid_per_item multiplied by a multiplier).
         mult = output_mus[:,:,:,0:1] * output_mus[:,:,:,-1:]
+        
         # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
-        output_mus = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_mus, mult)
         # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
         # than the bid_per_item dist, which 2) makes it unlikely that sampled 
         # total_limit is significantly lower than the sampled bid_per_item.
+        output_mus = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_mus, mult)
 
         # A distribution which (when sampled) returns an array of shape
         # output_mus.shape, i.e. [batch_size, episode_length, mu_layer_output_size].
@@ -1954,9 +1849,6 @@ class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
 
         # array of shape [batch_size, episode_length, num_subactions, 1 + num_dist_per_subaction]
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
-# # DEBUG
-#         print("chosen_actions:\n{}".format(chosen_actions))
-# #
         return chosen_actions
 
     def loss(self, states, actions, rewards):
@@ -1994,25 +1886,6 @@ class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
         discounted_rewards = self.discount(rewards)
         critic_loss = tf.reduce_sum((discounted_rewards - q_state_values)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
-# DEBUG
-        # # # # print(self.choices)
-        # print("loc:\n{}".format(action_distr.loc))
-        # print("scale: {}".format(action_distr.scale))
-        # print("low: {}".format(action_distr.low))
-        # print("high: {}".format(action_distr.high))
-        # # # # # print("states 2: {}".format(states))
-        # print("actions:\n{}".format(actions))
-        # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
-        # # # # print(subaction_dists_vals)
-        # # print("action prbs: {}".format(action_prbs))
-        # # # # print(rewards)
-        # # print("advtge:\n{}".format(discounted_rewards))
-        # print("neg logs:\n{}".format(neg_logs))
-        # print("q_state vals:\n{}".format(q_state_values))
-        # print("actor_loss: {}".format(actor_loss))
-        # print("critic_loss: {}".format(critic_loss))
-        # print("tot loss: {}".format(total_loss))
-#
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -2021,15 +1894,11 @@ class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
         else:
             gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-# DEBUG
-            # print("grads: {}".format(gradients))
-            # print("weights: {}".format(self.trainable_variables))
-#
 
 
 class AC_Q_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -2042,10 +1911,9 @@ class AC_Q_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
         self.layer1_size = 1
         self.layer1_ker_init = None
@@ -2062,6 +1930,12 @@ class AC_Q_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         self.critic_layer1_size = 6 * self.num_subactions
         self.critic_dense1 = tf.keras.layers.Dense(self.critic_layer1_size, activation='relu', dtype='float64')
         self.critic_dense2 = tf.keras.layers.Dense(1, dtype='float64')
+
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
 
     def states_fold_type(self):
         if self.is_partial:
@@ -2113,14 +1987,6 @@ class AC_Q_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
         # so that it can be used as a multiplier.
         output_lows = output_lows + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_lows.dtype)
-        # # create column that is 1st column multiplied by the multiplier 
-        # # (i.e. bid_per_item * multiplier).
-        # mult = output_lows[:,:,:,0:1] * output_lows[:,:,:,-1:]
-        # # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
-        # output_lows = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_lows, mult)
-        # # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
-        # # than the bid_per_item dist, which 2) makes it unlikely that sampled 
-        # # total_limit is significantly lower than the sampled bid_per_item.
 
         # make peak = low + offset, so that they are always higher than low.
         output_peaks = output_lows + output_offsets
@@ -2232,9 +2098,9 @@ class AC_Q_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class AC_MarketEnv_Continuous_sarsa(AbstractPolicy, tf.keras.Model):
+class AC_SARSA_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -2247,15 +2113,14 @@ class AC_MarketEnv_Continuous_sarsa(AbstractPolicy, tf.keras.Model):
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
-        self.layer1_size = 1 #50
-        self.layer1_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
-        self.mu_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
-        self.sigma_ker_init = None # tf.keras.initializers.RandomUniform(minval=0., maxval=1.)
+        self.layer1_size = 1
+        self.layer1_ker_init = None
+        self.mu_ker_init = None
+        self.sigma_ker_init = None
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
         
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
@@ -2269,6 +2134,11 @@ class AC_MarketEnv_Continuous_sarsa(AbstractPolicy, tf.keras.Model):
         self.critic_dense1 = tf.keras.layers.Dense(self.critic_layer1_size, activation='relu', dtype='float64')
         self.critic_dense2 = tf.keras.layers.Dense(1, dtype='float64')
 
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
 
     def states_fold_type(self):
         if self.is_partial:
@@ -2315,14 +2185,16 @@ class AC_MarketEnv_Continuous_sarsa(AbstractPolicy, tf.keras.Model):
         # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
         # so that it can be used as a multiplier.
         output_mus = output_mus + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_mus.dtype)
+        
         # create column that is 1st column multiplied by the multiplier 
         # (i.e. bid_per_item multiplied by a multiplier).
         mult = output_mus[:,:,:,0:1] * output_mus[:,:,:,-1:]
+        
         # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
-        output_mus = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_mus, mult)
         # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
         # than the bid_per_item dist, which 2) makes it unlikely that sampled 
         # total_limit is significantly lower than the sampled bid_per_item.
+        output_mus = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_mus, mult)
 
         # A distribution which (when sampled) returns an array of shape
         # output_mus.shape, i.e. [batch_size, episode_length, mu_layer_output_size].
@@ -2375,9 +2247,6 @@ class AC_MarketEnv_Continuous_sarsa(AbstractPolicy, tf.keras.Model):
 
         # array of shape [batch_size, episode_length, num_subactions, 1 + num_dist_per_subaction]
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
-# # DEBUG
-#         print("chosen_actions:\n{}".format(chosen_actions))
-# #
         return chosen_actions
 
     def loss(self, states, actions, rewards):
@@ -2421,25 +2290,6 @@ class AC_MarketEnv_Continuous_sarsa(AbstractPolicy, tf.keras.Model):
         actor_loss = tf.reduce_sum(losses)
         critic_loss = tf.reduce_sum((target - q_state_values)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
-# DEBUG
-        # # print("loc:\n{}".format(action_distr.loc))
-        # # print("scale: {}".format(action_distr.scale))
-        # # print("actions:\n{}".format(actions))
-        # # # print("dist probs: {}".format(action_distr.prob(subaction_dists_vals)))
-        # # # # # print(subaction_dists_vals)
-        # # # print("action prbs: {}".format(action_prbs))
-        # print("rewards:\n{}".format(rewards))
-        # # discounted_rewards = self.discount(rewards)
-        print("disc. rwds:\n{}".format(discounted_rewards))
-        # print("q_state vals:\n{}".format(q_state_values))
-        # print("target:\n{}".format(target))
-        # # # print("advantage:\n{}".format(advantage))
-        # # print("neg logs:\n{}".format(neg_logs))
-        print("r_loss: {}".format(tf.reduce_sum(neg_logs * tf.stop_gradient(discounted_rewards))))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
-        print("tot loss: {}".format(total_loss))
-#
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -2448,15 +2298,11 @@ class AC_MarketEnv_Continuous_sarsa(AbstractPolicy, tf.keras.Model):
         else:
             gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-# DEBUG
-            # print("grads: {}".format(gradients))
-            # print("weights: {}".format(self.trainable_variables))
-#
 
 
 class AC_SARSA_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -2469,10 +2315,9 @@ class AC_SARSA_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         # Network parameters and optimizer
         self.num_subactions = len(self.auction_item_spec_ids)
-        # "2" because bid_per_item and total_limit
-        # NOTE: assuming the "num_dist_per_subaction"th dist (i.e. last dist) 
-        # is the dist for total_limit
-        self.num_dist_per_subaction = 2
+        # Default is 2 for bid_per_item and total_limit.
+        # NOTE: assuming the last dist is the dist for total_limit.
+        self.num_dist_per_subaction = num_dist_per_spec
 
         self.layer1_size = 1
         self.layer1_ker_init = None
@@ -2490,6 +2335,12 @@ class AC_SARSA_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         self.critic_dense1 = tf.keras.layers.Dense(self.critic_layer1_size, activation='relu', dtype='float64')
         self.critic_dense2 = tf.keras.layers.Dense(1, dtype='float64')
 
+    def __repr__(self):
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+                                                                       self.is_partial, self.discount_factor, 
+                                                                       self.learning_rate, self.num_subactions,
+                                                                       type(self.optimizer).__name__)
+    
     def states_fold_type(self):
         if self.is_partial:
             return AbstractEnvironment.FOLD_TYPE_SINGLE
@@ -2540,14 +2391,6 @@ class AC_SARSA_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         # adding 1.0 to last column of num_dist_per_subaction columns (i.e. total_limit column)
         # so that it can be used as a multiplier.
         output_lows = output_lows + tf.constant([0.0]*(self.num_dist_per_subaction-1) + [1.0], dtype=output_lows.dtype)
-        # # create column that is 1st column multiplied by the multiplier 
-        # # (i.e. bid_per_item * multiplier).
-        # mult = output_lows[:,:,:,0:1] * output_lows[:,:,:,-1:]
-        # # replace the last column with mult (i.e. total_limit column is now multiplier*bid_per_item).
-        # output_lows = tf.where([True]*(self.num_dist_per_subaction-1) + [False], output_lows, mult)
-        # # NOTE: why do this? 1) it guarantees the total_limit dist is slightly higher
-        # # than the bid_per_item dist, which 2) makes it unlikely that sampled 
-        # # total_limit is significantly lower than the sampled bid_per_item.
 
         # make peak = low + offset, so that they are always higher than low.
         output_peaks = output_lows + output_offsets
