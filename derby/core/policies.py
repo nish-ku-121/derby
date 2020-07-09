@@ -355,7 +355,7 @@ class DummyREINFORCE(AbstractPolicy, tf.keras.Model):
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
+class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
     def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
@@ -528,7 +528,7 @@ class REINFORCE_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
+class REINFORCE_Uniform_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
     def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
@@ -698,7 +698,7 @@ class REINFORCE_MarketEnv_Continuous_Uniform(AbstractPolicy, tf.keras.Model):
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
+class REINFORCE_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
     def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
@@ -875,7 +875,7 @@ class REINFORCE_MarketEnv_Continuous_Triangular(AbstractPolicy, tf.keras.Model):
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class REINFORCE_baseline_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
+class REINFORCE_Baseline_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
     def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
@@ -1269,7 +1269,7 @@ class REINFORCE_Baseline_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.kera
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class AC_MarketEnv_Continuous_v1(AbstractPolicy, tf.keras.Model):
+class AC_TD_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
     def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
@@ -1664,7 +1664,7 @@ class AC_TD_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class AC_MarketEnv_Continuous_v2(AbstractPolicy, tf.keras.Model):
+class AC_Q_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
     def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
@@ -2062,7 +2062,7 @@ class AC_Q_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-class AC_MarketEnv_Continuous_sarsa(AbstractPolicy, tf.keras.Model):
+class AC_SARSA_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
     def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()

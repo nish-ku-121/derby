@@ -6,9 +6,9 @@ from derby.core.pmfs import PMF
 from derby.core.environments import train, generate_trajectories, OneCampaignNDaysEnv
 from derby.core.agents import Agent
 from derby.core.policies import DummyPolicy1, DummyPolicy2, BudgetPerReachPolicy, \
-DummyREINFORCE, REINFORCE_MarketEnv_Continuous, REINFORCE_baseline_MarketEnv_Continuous, \
-REINFORCE_MarketEnv_Continuous_Uniform, REINFORCE_MarketEnv_Continuous_Triangular, \
-AC_MarketEnv_Continuous_v1, AC_MarketEnv_Continuous_v2, AC_MarketEnv_Continuous_sarsa, \
+DummyREINFORCE, REINFORCE_Gaussian_MarketEnv_Continuous, REINFORCE_Baseline_Gaussian_MarketEnv_Continuous, \
+REINFORCE_Uniform_MarketEnv_Continuous, REINFORCE_Triangular_MarketEnv_Continuous, \
+AC_TD_Gaussian_MarketEnv_Continuous, AC_Q_Gaussian_MarketEnv_Continuous, AC_SARSA_Gaussian_MarketEnv_Continuous, \
 REINFORCE_Baseline_Triangular_MarketEnv_Continuous, AC_TD_Triangular_MarketEnv_Continuous, \
 AC_Q_Triangular_MarketEnv_Continuous, AC_SARSA_Triangular_MarketEnv_Continuous
 from pprint import pprint
@@ -376,7 +376,7 @@ class Experiment:
                                   num_items_per_timestep_min, num_items_per_timestep_max)
              
         agents = [
-                    Agent("agent1", REINFORCE_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
+                    Agent("agent1", REINFORCE_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
                     Agent("agent2", DummyPolicy1(auction_item_specs[1], 5, 5))
         ]
         
@@ -446,7 +446,7 @@ class Experiment:
                                   num_items_per_timestep_min, num_items_per_timestep_max)
              
         agents = [
-                    Agent("agent1", REINFORCE_baseline_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
+                    Agent("agent1", REINFORCE_Baseline_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
                     Agent("agent2", DummyPolicy1(auction_item_specs[1], 5, 5))
         ]
         
@@ -516,7 +516,7 @@ class Experiment:
                                   num_items_per_timestep_min, num_items_per_timestep_max)
              
         agents = [
-                    Agent("agent1", AC_MarketEnv_Continuous_v1(auction_item_spec_ids, learning_rate=lr)),
+                    Agent("agent1", AC_TD_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
                     Agent("agent2", DummyPolicy1(auction_item_specs[1], 5, 5))
         ]
         
@@ -586,7 +586,7 @@ class Experiment:
                                   num_items_per_timestep_min, num_items_per_timestep_max)
              
         agents = [
-                    Agent("agent1", AC_MarketEnv_Continuous_v2(auction_item_spec_ids, learning_rate=lr)),
+                    Agent("agent1", AC_Q_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
                     Agent("agent2", DummyPolicy1(auction_item_specs[1], 5, 5))
         ]
         
@@ -655,7 +655,7 @@ class Experiment:
                                   num_items_per_timestep_min, num_items_per_timestep_max)
              
         agents = [
-                    Agent("agent1", REINFORCE_MarketEnv_Continuous_Uniform(auction_item_spec_ids, learning_rate=lr)),
+                    Agent("agent1", REINFORCE_Uniform_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
                     Agent("agent2", DummyPolicy1(auction_item_specs[1], 5, 5))
         ]
         
@@ -725,7 +725,7 @@ class Experiment:
                                   num_items_per_timestep_min, num_items_per_timestep_max)
              
         agents = [
-                    Agent("agent1", REINFORCE_MarketEnv_Continuous_Triangular(auction_item_spec_ids, learning_rate=lr)),
+                    Agent("agent1", REINFORCE_Triangular_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
                     Agent("agent2", DummyPolicy1(auction_item_specs[1], 5, 5))
         ]
         
@@ -795,7 +795,7 @@ class Experiment:
                                   num_items_per_timestep_min, num_items_per_timestep_max)
              
         agents = [
-                    Agent("agent1", AC_MarketEnv_Continuous_sarsa(auction_item_spec_ids, learning_rate=lr)),
+                    Agent("agent1", AC_SARSA_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
                     Agent("agent2", DummyPolicy1(auction_item_specs[1], 5, 5))
         ]
         
@@ -1133,17 +1133,17 @@ if __name__ == '__main__':
         'exp_3': experiment.exp_3,
         'exp_4': experiment.exp_4,
         'exp_5': experiment.exp_5,
-        'exp_6': experiment.exp_6,
-        'exp_7': experiment.exp_7,
-        'exp_8': experiment.exp_8,
-        'exp_9': experiment.exp_9,
-        'exp_10': experiment.exp_10,
-        'exp_11': experiment.exp_11,
-        'exp_12': experiment.exp_12,
-        'exp_13': experiment.exp_13,
-        'exp_14': experiment.exp_14,
-        'exp_15': experiment.exp_15,
-        'exp_16': experiment.exp_16
+        'exp_6': experiment.exp_6, # REINFORCE_Gaussian vs. DummyPolicy1
+        'exp_7': experiment.exp_7, # REINFORCE_Baseline_Gaussian vs. DummyPolicy1
+        'exp_8': experiment.exp_8, # AC_TD_Gaussian vs. DummyPolicy1
+        'exp_9': experiment.exp_9, # AC_Q_Gaussian vs. DummyPolicy1
+        'exp_10': experiment.exp_10, # REINFORCE_Uniform vs. DummyPolicy1
+        'exp_11': experiment.exp_11, # REINFORCE_Triangular vs. DummyPolicy1
+        'exp_12': experiment.exp_12, # AC_SARSA_Gaussian vs. DummyPolicy1
+        'exp_13': experiment.exp_13, # REINFORCE_Baseline_Triangular vs. DummyPolicy1
+        'exp_14': experiment.exp_14, # AC_TD_Triangular vs. DummyPolicy1
+        'exp_15': experiment.exp_15, # AC_Q_Triangular vs. DummyPolicy1
+        'exp_16': experiment.exp_16 # AC_SARSA_Triangular vs. DummyPolicy1
     }
     try:
         exp_func = function_mappings[exp]
