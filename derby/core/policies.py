@@ -400,12 +400,13 @@ class DummyREINFORCE(AbstractPolicy, tf.keras.Model):
 
 class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
-    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, is_partial=False, discount_factor=1, learning_rate=0.0001):
+    def __init__(self, auction_item_spec_ids, num_dist_per_spec=2, budget_per_reach=1.0, is_partial=False, discount_factor=1, learning_rate=0.0001):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
         self.is_tensorflow = True
         self.learning_rate = learning_rate
+        self.budget_per_reach = budget_per_reach
 
         self.auction_item_spec_ids = auction_item_spec_ids
         self.subactions_min = 0
@@ -419,16 +420,18 @@ class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         self.layer1_size = 1
         self.layer1_ker_init = None
-        self.mu_ker_init = None
-        self.sigma_ker_init = None
+        self.mu_ker_init = tf.keras.initializers.RandomUniform(minval=0.001, maxval=0.001)
+        self.sigma_ker_init = tf.keras.initializers.RandomUniform(minval=0.001, maxval=0.001)
+        self.mu_bias_init = tf.keras.initializers.RandomUniform(minval=self.budget_per_reach, maxval=self.budget_per_reach)
+        self.sigma_bias_init = tf.keras.initializers.RandomUniform(minval=self.budget_per_reach, maxval=self.budget_per_reach)
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
         
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=tf.nn.leaky_relu, dtype='float64')
         
         # Layers for calculating \pi(a|s) = N(a|mu(s),sigma(s)) 
         #                                 = \prod_j \prod_k N(sub_a_j_dist_k|mu(s),sigma(s))        
-        self.mu_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, kernel_initializer=self.mu_ker_init, use_bias=False, activation=None, dtype='float64')
-        self.sigma_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, kernel_initializer=self.sigma_ker_init, use_bias=False, activation=None, dtype='float64')
+        self.mu_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, kernel_initializer=self.mu_ker_init, bias_initializer=self.mu_bias_init, activation=None, dtype='float64')
+        self.sigma_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, kernel_initializer=self.sigma_ker_init, bias_initializer=self.sigma_bias_init, activation=None, dtype='float64')
         
 
     def __repr__(self):
@@ -448,8 +451,9 @@ class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
     def rewards_fold_type(self):
         return AbstractEnvironment.FOLD_TYPE_SINGLE
-
-    def call(self, states):
+# DEBUG
+    def call(self, states, debug=False):
+#        
         '''
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
         where new_state_size is single_agent_state_size if self.partial else 
@@ -471,9 +475,9 @@ class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         output_sigmas = self.sigma_layer(output)
 
         # mus need to be >= 0 because bids need to be >= 0.
-        output_mus = tf.nn.softplus(output_mus)
+        output_mus = tf.nn.relu(output_mus)
         # variance needs to be a positive number, so pass through softplus.
-        output_sigmas = tf.nn.softplus(output_sigmas) # + 1e-5
+        output_sigmas = tf.nn.relu(output_sigmas) # + 1e-5
 
         # reshape to [batch_size, episode_length, num_subactions, num_dist_per_subaction]
         output_mus = tf.reshape(output_mus, [*output_mus.shape[:2]] + [self.num_subactions, self.num_dist_per_subaction])
@@ -498,10 +502,16 @@ class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         # NOTE: make sure loc and scale are float tensors so that they're compatible 
         # with tfp.distributions.Normal. Otherwise it will throw an error.
         dist = tfp.distributions.Normal(loc=output_mus, scale=output_sigmas)
-
+# DEBUG
+        if debug:
+            print("weights:\n{}".format(self.trainable_variables))
+            print("outputs:\n{}".format(output))
+            print("loc:\n{}".format(dist.loc))
+            print("scale:\n{}".format(dist.scale))
+#
         return dist
 
-    def choose_actions(self, call_output):
+    def choose_actions(self, call_output, debug=False):
         '''
         :param call_output: output of call func.
         :return: an array of shape [batch_size, episode_length] with actual actions choosen in some way.
@@ -542,8 +552,10 @@ class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         '''
         # states is of episode_length, but actions is of episode_length-1.
         # So delete the last state of each episode.
-        action_distr = self.call(states[:,:-1])
-
+# DEBUG
+        action_distr = self.call(states[:,:-1], debug=False)
+        # print("actions:\n{}".format(actions))
+#
         # if each subaction is [auction_item_spec_id, bid_per_item, total_limit],
         # then slice out the 0th index to get each [bid_per_item, total_limit].
         # Note: the length of this (i.e. 2) = self.num_dist_per_subaction.
