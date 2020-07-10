@@ -123,7 +123,7 @@ class Experiment:
         return scale_actions_func, descale_actions_func
 
 
-    def exp_1(self, debug=False):
+    def exp_1(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -139,21 +139,25 @@ class Experiment:
         env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
                                   num_items_per_timestep_min, num_items_per_timestep_max)
 
-        horizon_cutoff = 100
-        num_of_trajs = 2 # how many times to run the game from start to finish
-        num_of_days = 5 # how long the game lasts
         agents = [
-                    Agent("agent1", FixedBidPolicy(auction_item_specs[0], 1.0, 1.0)), 
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 2.0, 2.0))
+                    Agent("agent1", FixedBidPolicy(1.0, 1.0, auction_item_spec=auction_item_specs[0])), 
+                    Agent("agent2", FixedBidPolicy(2.0, 2.0, auction_item_spec=auction_item_specs[1]))
         ]
 
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+
+        # Vectorize is True
         env.vectorize = True
         env.init(agents, num_of_days)
         states, actions, rewards = generate_trajectories(env, num_of_trajs, horizon_cutoff, debug=debug)
         return states, actions, rewards
 
 
-    def exp_2(self, debug=True):
+    def exp_2(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -169,25 +173,25 @@ class Experiment:
         env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
                                   num_items_per_timestep_min, num_items_per_timestep_max)
 
-        horizon_cutoff = 100
-        num_of_trajs = 2 # how many times to run the game from start to finish
-        num_of_days = 5 # how long the game lasts
         agents = [
-                    Agent("agent1", None), 
-                    Agent("agent2", None)
+                    Agent("agent1", FixedBidPolicy(1.0, 1.0, auction_item_spec=auction_item_specs[0])), 
+                    Agent("agent2", FixedBidPolicy(2.0, 2.0, auction_item_spec=auction_item_specs[1]))
                 ]
-        p0 = FixedBidPolicy(auction_item_specs[0], 1.0, 1.0)
-        p1 = FixedBidPolicy(auction_item_specs[1], 2.0, 2.0)
-        agents[0].policy = p0
-        agents[1].policy = p1
 
-        env.init(agents, num_of_days)
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+
+        # Vectorize is False
         env.vectorize = False
-        states, actions, rewards = generate_trajectories(env, agents, num_of_trajs, horizon_cutoff, debug=debug)
+        env.init(agents, num_of_days)
+        states, actions, rewards = generate_trajectories(env, num_of_trajs, horizon_cutoff, debug=debug)
         return states, actions, rewards
 
 
-    def exp_3(self, debug=False):
+    def exp_3(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -203,13 +207,16 @@ class Experiment:
         env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
                                   num_items_per_timestep_min, num_items_per_timestep_max)
 
-        horizon_cutoff = 100
-        num_of_trajs = 2 # how many times to run the game from start to finish
-        num_of_days = 5 # how long the game lasts
         agents = [
                     Agent("agent1", BudgetPerReachPolicy()), 
                     Agent("agent2", BudgetPerReachPolicy())
         ]
+
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
 
         env.vectorize = True
         env.init(agents, num_of_days)
@@ -217,7 +224,7 @@ class Experiment:
         return states, actions, rewards
 
 
-    def exp_4(self, debug=False):
+    def exp_4(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -239,13 +246,17 @@ class Experiment:
         env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
                                   num_items_per_timestep_min, num_items_per_timestep_max)
   
-        num_of_days = 5 # how long the game lasts
-        num_of_trajs = 20 # how many times to run the game from start to finish
-        horizon_cutoff = 100
         agents = [
                     Agent("agent1", DummyREINFORCE(learning_rate=0.0002)), 
-#                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 0.5, 0.5))
-        ]   
+#                    Agent("agent2", FixedBidPolicy(0.5, 0.5, auction_item_spec=auction_item_specs[1]))
+        ]
+
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+
         env.vectorize = True
         env.init(agents, num_of_days)
         
@@ -290,7 +301,7 @@ class Experiment:
         return None, None, None
 
 
-    def exp_5(self, debug=False):
+    def exp_5(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -312,12 +323,16 @@ class Experiment:
         env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
                                   num_items_per_timestep_min, num_items_per_timestep_max)
   
-        num_of_days = 5 # how long the game lasts
-        num_of_trajs = 20 # how many times to run the game from start to finish
-        horizon_cutoff = 100
         agents = [
                     Agent("agent1", DummyREINFORCE(learning_rate=0.0002)), 
         ]
+
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+
         env.vectorize = True
         env.init(agents, num_of_days)
         
@@ -377,7 +392,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", REINFORCE_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -444,7 +459,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", REINFORCE_Baseline_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -506,7 +521,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", AC_TD_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -568,7 +583,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", AC_Q_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -630,7 +645,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", REINFORCE_Uniform_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -692,7 +707,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", REINFORCE_Triangular_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -754,7 +769,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", AC_SARSA_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -816,7 +831,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", REINFORCE_Baseline_Triangular_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -878,7 +893,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", AC_TD_Triangular_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -940,7 +955,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", AC_Q_Triangular_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -1002,7 +1017,7 @@ class Experiment:
              
         agents = [
                     Agent("agent1", AC_SARSA_Triangular_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
-                    Agent("agent2", FixedBidPolicy(auction_item_specs[1], 5, 5))
+                    Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
         num_of_days = num_days # how long the game lasts
@@ -2409,6 +2424,14 @@ if __name__ == '__main__':
     num_trajs = int(sys.argv[3])
     num_epochs = int(sys.argv[4])
     lr = float(sys.argv[5])
+    try:
+        debug_str = sys.argv[6].strip().lower()
+        if (debug_str == 't') or (debug_str == 'true'):
+            debug = True
+        else:
+            debug = False
+    except:
+        debug = False
     experiment = Experiment()
     function_mappings = {
         'exp_1': experiment.exp_1,
@@ -2456,15 +2479,14 @@ if __name__ == '__main__':
         raise ValueError('invalid input')
 
     print("Running experiment {}".format(exp_func.__name__))
-    states, actions, rewards = exp_func(num_days, num_trajs, num_epochs, lr, debug=False)
-    if states is not None:
-        print("states shape: {}".format(states.shape))
-        print(states)
-        print()
-    if actions is not None:
-        print("actions shape: {}".format(actions.shape))
-        print(actions)
-        print()
-    if rewards is not None:
-        print("rewards shape: {}".format(rewards.shape))
-        print(rewards)
+    states, actions, rewards = exp_func(num_days, num_trajs, num_epochs, lr, debug=debug)
+    if debug:
+        if states is not None:
+            print("states shape: {}".format(states.shape))
+            print("states:\n{}".format(states))
+            print()
+        if actions is not None:
+            print("actions:\n{}".format(actions))
+            print()
+        if rewards is not None:
+            print("rewards:\n{}".format(rewards))
