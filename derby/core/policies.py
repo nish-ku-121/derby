@@ -119,16 +119,15 @@ class AbstractPolicy(ABC):
 
 class FixedBidPolicy(AbstractPolicy):
 
-    def __init__(self, auction_item_spec, bid_per_item, total_limit):
+    def __init__(self, bid_per_item, total_limit, auction_item_spec=None):
         super().__init__()
-        self.auction_item_spec = auction_item_spec
         self.bid_per_item = bid_per_item
         self.total_limit = total_limit
+        self.auction_item_spec = auction_item_spec
 
     def __repr__(self):
-        return "{}(auction_item_spec: {}, bid_per_item: {}, total_limit: {})".format(self.__class__.__name__, 
-                                                                       self.auction_item_spec, self.bid_per_item, 
-                                                                       self.total_limit)
+        return "{}(bid_per_item: {}, total_limit: {})".format(self.__class__.__name__, 
+                                                              self.bid_per_item, self.total_limit)
 
     def states_fold_type(self):
         return AbstractEnvironment.FOLD_TYPE_SINGLE
@@ -146,9 +145,17 @@ class FixedBidPolicy(AbstractPolicy):
             for j in range(states.shape[1]):
                 state_i_j = states[i][j]
                 if isinstance(state_i_j, CampaignBidderState):
-                    action = [ Bid(agent, auction_item_spec, bid_per_item=bpi, total_limit=lim) ]
+                    if (self.auction_item_spec is None):
+                        auction_item_spec = state_i_j.campaign.target
+                    else:
+                        auction_item_spec = self.auction_item_spec
+                    action = [ Bid(self.agent, auction_item_spec, self.bid_per_item, self.total_limit) ]
                 else:
-                    action = [ [self.auction_item_spec.uid, self.bid_per_item, self.total_limit] ]
+                    if (self.auction_item_spec is None):
+                        spec_id = state_i_j[2]
+                    else:
+                        spec_id = self.auction_item_spec.uid
+                    action = [ [spec_id, self.bid_per_item, self.total_limit] ]
                 actions_i.append(action)
             actions.append(actions_i)
         actions = np.array(actions)
