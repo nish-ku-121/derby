@@ -26,7 +26,9 @@ def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, debug=False
                                                                 scale_states_func=scale_states_func,
                                                                 debug=debug,
                                                                 update_policies_after_every_step=update_policies_after_every_step)
-
+# # DEBUG
+#         print("actions:\n{}".format(actions))
+# #
         # tuple (agent, states for agent, actions for agent, rewards for agent, agent's policy loss)
         # for evey agent in env.agents.
         sarl_per_agent = []

@@ -10,7 +10,9 @@ DummyREINFORCE, REINFORCE_Gaussian_MarketEnv_Continuous, REINFORCE_Baseline_Gaus
 REINFORCE_Uniform_MarketEnv_Continuous, REINFORCE_Triangular_MarketEnv_Continuous, \
 AC_TD_Gaussian_MarketEnv_Continuous, AC_Q_Gaussian_MarketEnv_Continuous, AC_SARSA_Gaussian_MarketEnv_Continuous, \
 REINFORCE_Baseline_Triangular_MarketEnv_Continuous, AC_TD_Triangular_MarketEnv_Continuous, \
-AC_Q_Triangular_MarketEnv_Continuous, AC_SARSA_Triangular_MarketEnv_Continuous
+AC_Q_Triangular_MarketEnv_Continuous, AC_SARSA_Triangular_MarketEnv_Continuous, \
+REINFORCE_Gaussian_v2_MarketEnv_Continuous, REINFORCE_Gaussian_v3_MarketEnv_Continuous, \
+AC_Q_Gaussian_v2_MarketEnv_Continuous
 from pprint import pprint
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -599,8 +601,10 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
-        scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
+        samples = env.get_states_samples(10000)
+        _, scale_states_func, _  = self.get_states_scaler_descaler(samples)
+        actions_scaler, scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(samples)
+        
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
    
@@ -2457,7 +2461,7 @@ class Experiment:
 
         agents = [
                     Agent("agent1", 
-                        REINFORCE_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr, budget_per_reach=scaled_avg_bpr),
+                        REINFORCE_Gaussian_v2_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr, budget_per_reach=scaled_avg_bpr),
                         scale_states_func, scale_actions_func,
                         descale_actions_func
                     ),
@@ -2494,7 +2498,414 @@ class Experiment:
             if ((i+1) % 50) == 0:
                 avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                max_last_50_epochs = [(agent.name, np.max(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
                 print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
+                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+        
+        end = time.time()
+        print("Took {} sec to train".format(end-start))
+        return None, None, None
+
+
+    def exp_1001(self, num_days, num_trajs, num_epochs, lr, debug=False):
+        auction_item_specs = self.auction_item_specs
+        auction = self.first_price_auction
+        campaigns = self.campaigns
+        auction_item_spec_pmf = PMF({
+                    self.auction_item_specs[0] : 0,
+                    self.auction_item_specs[1] : 1
+        })
+        auction_item_spec_ids = [self.auction_item_specs[1].uid]
+        campaign_pmf = PMF({
+                    self.campaigns[0] : 0,
+                    self.campaigns[1] : 1
+        })
+        if debug:
+            for c in campaigns:
+                pprint(c)
+                print()
+
+        num_items_per_timestep_min = 1
+        num_items_per_timestep_max = 2
+        env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
+                                  num_items_per_timestep_min, num_items_per_timestep_max)
+        
+        # An array of shape [num_of_samples, num_of_agents, state_size].
+        # If agents have not been set, num_of_agents defaults to 1.
+        samples = env.get_states_samples(10000)
+        _, scale_states_func, _  = self.get_states_scaler_descaler(samples)
+        actions_scaler, scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(samples)
+        
+        # shape (num_of_nonzero_samples, state_size)
+        nonzero_samples = tf.boolean_mask(samples, tf.math.logical_not(tf.math.logical_and(samples[:,:,0] == 0, samples[:,:,1] == 0)))
+        avg_budget_per_reach = tf.reduce_mean(nonzero_samples[:,1] / nonzero_samples[:,0])
+        scaled_avg_bpr = actions_scaler.transform([[avg_budget_per_reach]])[0][0]
+
+        agents = [
+                    Agent("agent1", 
+                        REINFORCE_Gaussian_v2_MarketEnv_Continuous(
+                                auction_item_spec_ids, learning_rate=lr, 
+                                budget_per_reach=scaled_avg_bpr, shape_reward=True
+                        ),
+                        scale_states_func, scale_actions_func,
+                        descale_actions_func
+                    ),
+                    Agent("agent2", FixedBidPolicy(5, 5))
+        ]
+        
+        # agents[0].set_scalers(scale_states_func, scale_actions_func)
+        # agents[0].set_descaler(descale_actions_func)
+
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+
+        env.vectorize = True
+        env.init(agents, num_of_days)
+   
+        # Prints agent1's policy info
+        state_size = 6
+        agents[0].policy.build( (NUM_EPOCHS, num_of_trajs, len(agents) * state_size) )
+        agents[0].policy.summary()
+
+        print("agent policies: {}".format([agent.policy for agent in env.agents]))
+
+        start = time.time()
+
+        for i in range(NUM_EPOCHS):
+            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
+            print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
+
+            if ((i+1) % 50) == 0:
+                avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                max_last_50_epochs = [(agent.name, np.max(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
+                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+        
+        end = time.time()
+        print("Took {} sec to train".format(end-start))
+        return None, None, None
+
+
+    def exp_1002(self, num_days, num_trajs, num_epochs, lr, debug=False):
+        auction_item_specs = self.auction_item_specs
+        auction = self.first_price_auction
+        campaigns = self.campaigns
+        auction_item_spec_pmf = PMF({
+                    self.auction_item_specs[0] : 0,
+                    self.auction_item_specs[1] : 1
+        })
+        auction_item_spec_ids = [self.auction_item_specs[1].uid]
+        campaign_pmf = PMF({
+                    self.campaigns[0] : 0,
+                    self.campaigns[1] : 1
+        })
+        if debug:
+            for c in campaigns:
+                pprint(c)
+                print()
+
+        num_items_per_timestep_min = 1
+        num_items_per_timestep_max = 2
+        env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
+                                  num_items_per_timestep_min, num_items_per_timestep_max)
+        
+        # An array of shape [num_of_samples, num_of_agents, state_size].
+        # If agents have not been set, num_of_agents defaults to 1.
+        samples = env.get_states_samples(10000)
+        _, scale_states_func, _  = self.get_states_scaler_descaler(samples)
+        actions_scaler, scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(samples)
+        
+        # shape (num_of_nonzero_samples, state_size)
+        nonzero_samples = tf.boolean_mask(samples, tf.math.logical_not(tf.math.logical_and(samples[:,:,0] == 0, samples[:,:,1] == 0)))
+        avg_budget_per_reach = tf.reduce_mean(nonzero_samples[:,1] / nonzero_samples[:,0])
+        scaled_avg_bpr = actions_scaler.transform([[avg_budget_per_reach]])[0][0]
+
+        agents = [
+                    Agent("agent1", 
+                        REINFORCE_Gaussian_v3_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr, budget_per_reach=scaled_avg_bpr),
+                        scale_states_func, scale_actions_func,
+                        descale_actions_func
+                    ),
+                    Agent("agent2", FixedBidPolicy(5, 5))
+        ]
+        
+        # agents[0].set_scalers(scale_states_func, scale_actions_func)
+        # agents[0].set_descaler(descale_actions_func)
+
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+
+        env.vectorize = True
+        env.init(agents, num_of_days)
+   
+        # Prints agent1's policy info
+        state_size = 6
+        agents[0].policy.build( (NUM_EPOCHS, num_of_trajs, len(agents) * state_size) )
+        agents[0].policy.summary()
+
+        print("agent policies: {}".format([agent.policy for agent in env.agents]))
+
+        start = time.time()
+
+        for i in range(NUM_EPOCHS):
+            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
+            print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
+
+            if ((i+1) % 50) == 0:
+                avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                max_last_50_epochs = [(agent.name, np.max(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
+                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+        
+        end = time.time()
+        print("Took {} sec to train".format(end-start))
+        return None, None, None
+
+
+    def exp_1004(self, num_days, num_trajs, num_epochs, lr, debug=False):
+        auction_item_specs = self.auction_item_specs
+        auction = self.first_price_auction
+        campaigns = self.campaigns
+        auction_item_spec_pmf = PMF({
+                    self.auction_item_specs[0] : 0,
+                    self.auction_item_specs[1] : 1
+        })
+        auction_item_spec_ids = [self.auction_item_specs[1].uid]
+        campaign_pmf = PMF({
+                    self.campaigns[0] : 0,
+                    self.campaigns[1] : 1
+        })
+        if debug:
+            for c in campaigns:
+                pprint(c)
+                print()
+
+        num_items_per_timestep_min = 1
+        num_items_per_timestep_max = 2
+        env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
+                                  num_items_per_timestep_min, num_items_per_timestep_max)
+        
+        # An array of shape [num_of_samples, num_of_agents, state_size].
+        # If agents have not been set, num_of_agents defaults to 1.
+        samples = env.get_states_samples(10000)
+        _, scale_states_func, _  = self.get_states_scaler_descaler(samples)
+        actions_scaler, scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(samples)
+        
+        # shape (num_of_nonzero_samples, state_size)
+        nonzero_samples = tf.boolean_mask(samples, tf.math.logical_not(tf.math.logical_and(samples[:,:,0] == 0, samples[:,:,1] == 0)))
+        avg_budget_per_reach = tf.reduce_mean(nonzero_samples[:,1] / nonzero_samples[:,0])
+        scaled_avg_bpr = actions_scaler.transform([[avg_budget_per_reach]])[0][0]
+
+        agents = [
+                    Agent("agent1", 
+                        REINFORCE_Gaussian_v3_MarketEnv_Continuous(
+                            auction_item_spec_ids, learning_rate=lr, 
+                            budget_per_reach=scaled_avg_bpr, shape_reward=True
+                        ),
+                        scale_states_func, scale_actions_func,
+                        descale_actions_func
+                    ),
+                    Agent("agent2", FixedBidPolicy(5, 5))
+        ]
+        
+        # agents[0].set_scalers(scale_states_func, scale_actions_func)
+        # agents[0].set_descaler(descale_actions_func)
+
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+
+        env.vectorize = True
+        env.init(agents, num_of_days)
+   
+        # Prints agent1's policy info
+        state_size = 6
+        agents[0].policy.build( (NUM_EPOCHS, num_of_trajs, len(agents) * state_size) )
+        agents[0].policy.summary()
+
+        print("agent policies: {}".format([agent.policy for agent in env.agents]))
+
+        start = time.time()
+
+        for i in range(NUM_EPOCHS):
+            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
+            print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
+
+            if ((i+1) % 50) == 0:
+                avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                max_last_50_epochs = [(agent.name, np.max(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
+                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+        
+        end = time.time()
+        print("Took {} sec to train".format(end-start))
+        return None, None, None
+
+
+    def exp_1005(self, num_days, num_trajs, num_epochs, lr, debug=False):
+        auction_item_specs = self.auction_item_specs
+        auction = self.first_price_auction
+        campaigns = self.campaigns
+        auction_item_spec_pmf = PMF({
+                    self.auction_item_specs[0] : 0,
+                    self.auction_item_specs[1] : 1
+        })
+        auction_item_spec_ids = [self.auction_item_specs[1].uid]
+        campaign_pmf = PMF({
+                    self.campaigns[0] : 0,
+                    self.campaigns[1] : 1
+        })
+        if debug:
+            for c in campaigns:
+                pprint(c)
+                print()
+
+        num_items_per_timestep_min = 1
+        num_items_per_timestep_max = 2
+        env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
+                                  num_items_per_timestep_min, num_items_per_timestep_max)
+        
+        # An array of shape [num_of_samples, num_of_agents, state_size].
+        # If agents have not been set, num_of_agents defaults to 1.
+        samples = env.get_states_samples(10000)
+        _, scale_states_func, _  = self.get_states_scaler_descaler(samples)
+        actions_scaler, scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(samples)
+        
+        # shape (num_of_nonzero_samples, state_size)
+        nonzero_samples = tf.boolean_mask(samples, tf.math.logical_not(tf.math.logical_and(samples[:,:,0] == 0, samples[:,:,1] == 0)))
+        avg_budget_per_reach = tf.reduce_mean(nonzero_samples[:,1] / nonzero_samples[:,0])
+        scaled_avg_bpr = actions_scaler.transform([[avg_budget_per_reach]])[0][0]
+
+        agents = [
+                    Agent("agent1", 
+                        AC_Q_Gaussian_v2_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr, budget_per_reach=scaled_avg_bpr),
+                        scale_states_func, scale_actions_func,
+                        descale_actions_func
+                    ),
+                    Agent("agent2", FixedBidPolicy(5, 5))
+        ]
+        
+        # agents[0].set_scalers(scale_states_func, scale_actions_func)
+        # agents[0].set_descaler(descale_actions_func)
+
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+        print("agent policies: {}".format([agent.policy for agent in agents]))
+
+        env.vectorize = True
+        env.init(agents, num_of_days)
+        start = time.time()
+
+        for i in range(NUM_EPOCHS):
+            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
+            print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
+
+            if ((i+1) % 50) == 0:
+                avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                max_last_50_epochs = [(agent.name, np.max(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
+                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+        
+        end = time.time()
+        print("Took {} sec to train".format(end-start))
+        return None, None, None
+
+
+    def exp_1006(self, num_days, num_trajs, num_epochs, lr, debug=False):
+        auction_item_specs = self.auction_item_specs
+        auction = self.first_price_auction
+        campaigns = self.campaigns
+        auction_item_spec_pmf = PMF({
+                    self.auction_item_specs[0] : 0,
+                    self.auction_item_specs[1] : 1
+        })
+        auction_item_spec_ids = [self.auction_item_specs[1].uid]
+        campaign_pmf = PMF({
+                    self.campaigns[0] : 0,
+                    self.campaigns[1] : 1
+        })
+        if debug:
+            for c in campaigns:
+                pprint(c)
+                print()
+
+        num_items_per_timestep_min = 1
+        num_items_per_timestep_max = 2
+        env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
+                                  num_items_per_timestep_min, num_items_per_timestep_max)
+        
+        # An array of shape [num_of_samples, num_of_agents, state_size].
+        # If agents have not been set, num_of_agents defaults to 1.
+        samples = env.get_states_samples(10000)
+        _, scale_states_func, _  = self.get_states_scaler_descaler(samples)
+        actions_scaler, scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(samples)
+        
+        # shape (num_of_nonzero_samples, state_size)
+        nonzero_samples = tf.boolean_mask(samples, tf.math.logical_not(tf.math.logical_and(samples[:,:,0] == 0, samples[:,:,1] == 0)))
+        avg_budget_per_reach = tf.reduce_mean(nonzero_samples[:,1] / nonzero_samples[:,0])
+        scaled_avg_bpr = actions_scaler.transform([[avg_budget_per_reach]])[0][0]
+
+        agents = [
+                    Agent("agent1", 
+                        AC_Q_Gaussian_v2_MarketEnv_Continuous(
+                            auction_item_spec_ids, learning_rate=lr, 
+                            budget_per_reach=scaled_avg_bpr, shape_reward=True
+                        ),
+                        scale_states_func, scale_actions_func,
+                        descale_actions_func
+                    ),
+                    Agent("agent2", FixedBidPolicy(5, 5))
+        ]
+        
+        # agents[0].set_scalers(scale_states_func, scale_actions_func)
+        # agents[0].set_descaler(descale_actions_func)
+
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+        print("agent policies: {}".format([agent.policy for agent in agents]))
+
+        env.vectorize = True
+        env.init(agents, num_of_days)
+        start = time.time()
+
+        for i in range(NUM_EPOCHS):
+            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
+            print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
+
+            if ((i+1) % 50) == 0:
+                avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                max_last_50_epochs = [(agent.name, np.max(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
+                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
         
         end = time.time()
         print("Took {} sec to train".format(end-start))
@@ -2555,7 +2966,12 @@ if __name__ == '__main__':
         'exp_119': experiment.exp_119, # AC_TD_Triangular vs. StepPolicy (decreasing)
         'exp_120': experiment.exp_120, # AC_Q_Triangular vs. StepPolicy (decreasing)
         'exp_121': experiment.exp_121, # AC_SARSA_Triangular vs. StepPolicy (decreasing)
-        'exp_1000': experiment.exp_1000, # REINFORCE_Gaussian (with bpr init) vs. FixedBidPolicy
+        'exp_1000': experiment.exp_1000, # REINFORCE_v2_Gaussian (w/o rwd shaping) vs. FixedBidPolicy
+        'exp_1001': experiment.exp_1001, # REINFORCE_v2_Gaussian (w/ rwd shaping) vs. FixedBidPolicy
+        'exp_1002': experiment.exp_1002, # REINFORCE_v3_Gaussian (w/o rwd shaping) vs. FixedBidPolicy
+        'exp_1003': experiment.exp_1003, # REINFORCE_v3_Gaussian (w/ rwd shaping) vs. FixedBidPolicy
+        'exp_1004': experiment.exp_1004, # AC_Q_v2_Gaussian (w/o rwd shaping) vs. FixedBidPolicy
+        'exp_1005': experiment.exp_1005, # AC_Q_v2_Gaussian (w/ rwd shaping) vs. FixedBidPolicy
     }
     try:
         exp_func = function_mappings[exp]
