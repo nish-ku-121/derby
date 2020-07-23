@@ -613,10 +613,10 @@ class REINFORCE_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
         
 
     def __repr__(self):
-        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {}, shape_reward: {})".format(self.__class__.__name__, 
                                                                        self.is_partial, self.discount_factor, 
                                                                        self.learning_rate, self.num_subactions,
-                                                                       type(self.optimizer).__name__)
+                                                                       type(self.optimizer).__name__, self.shape_reward)
     
     def states_fold_type(self):
         if self.is_partial:
@@ -869,10 +869,10 @@ class REINFORCE_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
         
 
     def __repr__(self):
-        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {}, shape_reward: {})".format(self.__class__.__name__, 
                                                                        self.is_partial, self.discount_factor, 
                                                                        self.learning_rate, self.num_subactions,
-                                                                       type(self.optimizer).__name__)
+                                                                       type(self.optimizer).__name__, self.shape_reward)
     
     def states_fold_type(self):
         if self.is_partial:
@@ -2472,10 +2472,10 @@ class AC_Q_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 #
 
     def __repr__(self):
-        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {})".format(self.__class__.__name__, 
+        return "{}(is_partial: {}, discount: {}, lr: {}, num_actions: {}, optimizer: {}, shape_reward: {})".format(self.__class__.__name__, 
                                                                        self.is_partial, self.discount_factor, 
                                                                        self.learning_rate, self.num_subactions,
-                                                                       type(self.optimizer).__name__)
+                                                                       type(self.optimizer).__name__, self.shape_reward)
 
     def states_fold_type(self):
         if self.is_partial:
