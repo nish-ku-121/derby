@@ -2461,9 +2461,9 @@ class AC_Q_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
  
  # EXPERIMENT       
         # self.critic_layer1_size = 6 * self.num_subactions
-        self.critic_layer1_size = 1 + (self.num_subactions * self.num_dist_per_subaction)
-        self.critic_layer2_size = 1 + (self.num_subactions * self.num_dist_per_subaction)
-        self.critic_layer3_size = 1 + (self.num_subactions * self.num_dist_per_subaction)
+        self.critic_layer1_size = 6 + (self.num_subactions * self.num_dist_per_subaction)
+        self.critic_layer2_size = 6 + (self.num_subactions * self.num_dist_per_subaction)
+        self.critic_layer3_size = 6 + (self.num_subactions * self.num_dist_per_subaction)
         #self.critic_dense1 = tf.keras.layers.Dense(self.critic_layer1_size, activation='relu', dtype='float64')
         self.critic_dense1 = tf.keras.layers.Dense(self.critic_layer1_size, activation=tf.nn.leaky_relu, dtype='float64')
         self.critic_dense2 = tf.keras.layers.Dense(self.critic_layer2_size, activation=tf.nn.leaky_relu, dtype='float64')
@@ -2698,47 +2698,47 @@ class AC_Q_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
             # print("lower_bid_prbs:\n{}".format(lower_bid_prbs))
             # print("higher_bid_prbs:\n{}".format(higher_bid_prbs))
             # print("disc. rwds:\n{}".format(discounted_rewards))
-# # DEBUG
-#             divisor = 10
-#             def plotter(fig, axs, bids, rwds, q_vals, iter, loss):
-#                 plt.subplots_adjust(
-#                     left  = 0.15,  # the left side of the subplots of the figure
-#                     right = 0.95,    # the right side of the subplots of the figure
-#                     bottom = 0.15,   # the bottom of the subplots of the figure
-#                     top = 0.85,      # the top of the subplots of the figure
-#                     wspace = 0.3,   # the amount of width reserved for blank space between subplots
-#                     hspace = 0.5 
-#                 )
-#                 axs[0].scatter(bids, q_vals, c='purple')
-#                 axs[0].scatter(bids, rwds, c='red')
-#                 axs[0].set(
-#                             title="Network Q-Values",
-#                             xlabel="Bid", 
-#                             ylabel="Q Value",
-#                             xlim=[0.0,0.3],
-#                             ylim=[-10,10],
-#                             xticks=np.arange(0.0, 0.3, 0.02),
-#                             yticks=np.arange(-10, 10, 2)
-#                         )
+# DEBUG
+            divisor = 50
+            def plotter(fig, axs, bids, rwds, q_vals, iter, loss):
+                plt.subplots_adjust(
+                    left  = 0.15,  # the left side of the subplots of the figure
+                    right = 0.95,    # the right side of the subplots of the figure
+                    bottom = 0.15,   # the bottom of the subplots of the figure
+                    top = 0.85,      # the top of the subplots of the figure
+                    wspace = 0.3,   # the amount of width reserved for blank space between subplots
+                    hspace = 0.5 
+                )
+                axs[0].scatter(bids, q_vals, c='purple')
+                axs[0].scatter(bids, rwds, c='red')
+                axs[0].set(
+                            title="Network Q-Values",
+                            xlabel="Bid", 
+                            ylabel="Q Value",
+                            xlim=[0.0,0.3],
+                            ylim=[-10,10],
+                            xticks=np.arange(0.0, 0.3, 0.02),
+                            yticks=np.arange(-10, 10, 2)
+                        )
 
-#                 axs[1].scatter(iter, loss, color='blue')
-#                 axs[1].set(
-#                             title="Network Loss",
-#                             xlabel="Iteration",
-#                             ylabel="Critic Loss",
-#                             ylim=[-500,5000],
-#                             xticks=[iter],
-#                             yticks=np.arange(-500, 5000, 500)
-#                         )
-#             if ((self.plot_count % divisor) == 0):
-#                 fig, axs = plt.subplots(2)
-#                 plotter(fig, axs, all_bids[:,0], discounted_rewards[:,0], 
-#                     q_state_values[:,0], self.plot_count, critic_loss)
-#                 plt.savefig('q_figs/run_{}__iter_{}__lr_{}__critic_lr_mult_{}__q_vals.png'.format(
-#                                     id(self), self.plot_count, self.learning_rate, critic_lr_mult))
-#                 plt.close(fig)
-#             self.plot_count += 1
-# #
+                axs[1].scatter(iter, loss, color='blue')
+                axs[1].set(
+                            title="Network Loss",
+                            xlabel="Iteration",
+                            ylabel="Critic Loss",
+                            ylim=[-500,5000],
+                            xticks=[iter],
+                            yticks=np.arange(-500, 5000, 500)
+                        )
+            if ((self.plot_count % divisor) == 0):
+                fig, axs = plt.subplots(2)
+                plotter(fig, axs, all_bids[:,0], discounted_rewards[:,0], 
+                    q_state_values[:,0], self.plot_count, critic_loss)
+                plt.savefig('q_figs/run_{}__iter_{}__lr_{}__critic_lr_mult_{}__q_vals.png'.format(
+                                    id(self), self.plot_count, self.learning_rate, critic_lr_mult))
+                plt.close(fig)
+            self.plot_count += 1
+#
             # print("avg. disc. rwds:\n{}".format(tf.reduce_mean(self.discount(rewards), axis=0)))
             # print("avg. shaped disc. rwds:\n{}".format(tf.reduce_mean(discounted_rewards, axis=0)))
             # print("avg. q_vals:\n{}".format(tf.reduce_mean(q_state_values, axis=0)))
