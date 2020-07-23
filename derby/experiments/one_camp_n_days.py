@@ -2674,7 +2674,7 @@ class Experiment:
         return None, None, None
 
 
-    def exp_1004(self, num_days, num_trajs, num_epochs, lr, debug=False):
+    def exp_1003(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -2759,7 +2759,7 @@ class Experiment:
         return None, None, None
 
 
-    def exp_1005(self, num_days, num_trajs, num_epochs, lr, debug=False):
+    def exp_1004(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -2834,7 +2834,7 @@ class Experiment:
         return None, None, None
 
 
-    def exp_1006(self, num_days, num_trajs, num_epochs, lr, debug=False):
+    def exp_1005(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
