@@ -10,7 +10,8 @@ DummyREINFORCE, REINFORCE_Gaussian_MarketEnv_Continuous, REINFORCE_Baseline_Gaus
 REINFORCE_Uniform_MarketEnv_Continuous, REINFORCE_Triangular_MarketEnv_Continuous, \
 AC_TD_Gaussian_MarketEnv_Continuous, AC_Q_Gaussian_MarketEnv_Continuous, AC_SARSA_Gaussian_MarketEnv_Continuous, \
 REINFORCE_Baseline_Triangular_MarketEnv_Continuous, AC_TD_Triangular_MarketEnv_Continuous, \
-AC_Q_Triangular_MarketEnv_Continuous, AC_SARSA_Triangular_MarketEnv_Continuous
+AC_Q_Triangular_MarketEnv_Continuous, AC_SARSA_Triangular_MarketEnv_Continuous, \
+AC_SARSA_Baseline_V_Gaussian_MarketEnv_Continuous
 from pprint import pprint
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -1017,6 +1018,68 @@ class Experiment:
              
         agents = [
                     Agent("agent1", AC_SARSA_Triangular_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
+                    Agent("agent2", FixedBidPolicy(5, 5))
+        ]
+        
+        num_of_days = num_days # how long the game lasts
+        num_of_trajs = num_trajs # how many times to run the game
+        NUM_EPOCHS = num_epochs # how many batches of trajs to run
+        horizon_cutoff = 100
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+
+        env.vectorize = True
+        env.init(agents, num_of_days)
+
+        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
+        agents[0].set_scalers(scale_states_func, scale_actions_func)
+        agents[0].set_descaler(descale_actions_func)
+
+        print("agent policies: {}".format([agent.policy for agent in env.agents]))
+
+        start = time.time()
+
+        for i in range(NUM_EPOCHS):
+            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
+            print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
+
+            if ((i+1) % 50) == 0:
+                avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
+                            np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
+        
+        end = time.time()
+        print("Took {} sec to train".format(end-start))
+        return None, None, None
+
+
+    def exp_17(self, num_days, num_trajs, num_epochs, lr, debug=False):
+        auction_item_specs = self.auction_item_specs
+        auction = self.first_price_auction
+        campaigns = self.campaigns
+        auction_item_spec_pmf = PMF({
+                    self.auction_item_specs[0] : 0,
+                    self.auction_item_specs[1] : 1
+        })
+        auction_item_spec_ids = [self.auction_item_specs[1].uid]
+        campaign_pmf = PMF({
+                    self.campaigns[0] : 0,
+                    self.campaigns[1] : 1
+        })
+        if debug:
+            for c in campaigns:
+                pprint(c)
+                print()
+
+        num_items_per_timestep_min = 1
+        num_items_per_timestep_max = 2
+        env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
+                                  num_items_per_timestep_min, num_items_per_timestep_max)
+             
+        agents = [
+                    Agent("agent1", AC_SARSA_Baseline_V_Gaussian_MarketEnv_Continuous(auction_item_spec_ids, learning_rate=lr)),
                     Agent("agent2", FixedBidPolicy(5, 5))
         ]
         
@@ -2450,6 +2513,7 @@ if __name__ == '__main__':
         'exp_14': experiment.exp_14, # AC_TD_Triangular vs. FixedBidPolicy
         'exp_15': experiment.exp_15, # AC_Q_Triangular vs. FixedBidPolicy
         'exp_16': experiment.exp_16, # AC_SARSA_Triangular vs. FixedBidPolicy
+        'exp_17': experiment.exp_17, # AC_SARSA_Baseline_V_Gaussian vs. FixedBidPolicy
         'exp_100': experiment.exp_100, # REINFORCE_Gaussian vs. StepPolicy (increasing)
         'exp_101': experiment.exp_101, # REINFORCE_Baseline_Gaussian vs. StepPolicy (increasing)
         'exp_102': experiment.exp_102, # AC_TD_Gaussian vs. StepPolicy (increasing)
