@@ -1,0 +1,5 @@
+AC_TD_Gaussian(is_partial:False;discount:1;lr:8e-06;num_actions:1;optimizer:SGD),StepPolicy(start_bid:2;step_per_day:-1)
+-486.7427150298249,219.09897124260527,2.5,3.8275318418009276
+-4210.340512168717,3842.411294090499,2.4,3.6660605559646715
+-2e+17,0.0,0.0,0.0
+FAILED
