@@ -5,11 +5,12 @@
 ## ARGUMENTS ##
 
 log_file="$1"
+output_dir="$2"
+delete_orig="$3"
 
-
-if [ $# -lt 1 ]; then
+if [ $# -lt 2 ]; then
     echo "Not enough arguments provided"
-    echo 'Usage: ' "`basename "$0"`" '<log file>'
+    echo 'Usage: ' "`basename "$0"`" '<log file> <output dir> <delete original (optional)>'
     exit 1
 fi
 
@@ -27,27 +28,34 @@ then
     elif [[ "$experiment" == "exp_7" ]]
     then
         policies="REINFORCE_Baseline_MarketEnv_Continuous_Gaussian,DummyPolicy1"
+    else
+        ais="`grep -i "agent policies:" "${log_file}" | sed "s/[[:space:]]//g" | sed "s/),/)---/" | sed "s/,/;/g" | grep -io "AuctionItemSpecification(.*);"`"
+        policies="`grep -i "agent policies:" "${log_file}" | sed "s/[[:space:]]//g" | sed "s/),/)---/" | sed "s/,/;/g" | sed "s/auction_item_spec:${ais}/$(echo "${ais}" | grep -io "uid:[[0-9]]*");/" | sed "s/---/,/g" | sed "s/agentpolicies://" | tr -d []`"
     fi
 fi
 
 # Rename the policies to be clear and concise
-policies="`echo "${policies}" | sed "s/REINFORCE_MarketEnv_Continuous_Gaussian/REINFORCE__Gaussian__MarketEnv_Continuous/g"`"
-policies="`echo "${policies}" | sed "s/REINFORCE_MarketEnv_Continuous_Uniform/REINFORCE__Uniform__MarketEnv_Continuous/g"`"
-policies="`echo "${policies}" | sed "s/REINFORCE_MarketEnv_Continuous_Triangular/REINFORCE__Triangular__MarketEnv_Continuous/g"`"
-policies="`echo "${policies}" | sed "s/REINFORCE_Baseline_MarketEnv_Continuous_Gaussian/REINFORCE_Baseline__Guassian__MarketEnv_Continuous/g"`"
-policies="`echo "${policies}" | sed "s/REINFORCE_Baseline_Triangular_MarketEnv_Continuous/REINFORCE_Baseline__Triangular__MarketEnv_Continuous/g"`"
-policies="`echo "${policies}" | sed "s/AC_MarketEnv_Continuous_v1/AC_TD__Gaussian__MarketEnv_Continuous/g"`"
-policies="`echo "${policies}" | sed "s/AC_TD_Triangular_MarketEnv_Continuous/AC_TD__Triangular__MarketEnv_Continuous/g"`"
-policies="`echo "${policies}" | sed "s/AC_MarketEnv_Continuous_v2/AC_Q__Gaussian__MarketEnv_Continuous/g"`"
-policies="`echo "${policies}" | sed "s/AC_Q_Triangular_MarketEnv_Continuous/AC_Q__Triangular__MarketEnv_Continuous/g"`"
-policies="`echo "${policies}" | sed "s/AC_MarketEnv_Continuous_sarsa/AC_SARSA__Gaussian__MarketEnv_Continuous/g"`"
-policies="`echo "${policies}" | sed "s/AC_SARSA_Triangular_MarketEnv_Continuous/AC_SARSA__Gaussian__MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/REINFORCE_MarketEnv_Continuous_Gaussian/REINFORCE_Gaussian_MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/REINFORCE_MarketEnv_Continuous_Uniform/REINFORCE_Uniform_MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/REINFORCE_MarketEnv_Continuous_Triangular/REINFORCE_Triangular_MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/REINFORCE_Baseline_MarketEnv_Continuous_Gaussian/REINFORCE_Baseline_Guassian_MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/REINFORCE_Baseline_Triangular_MarketEnv_Continuous/REINFORCE_Baseline_Triangular_MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_MarketEnv_Continuous_v1/AC_TD_Gaussian_MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_TD_Triangular_MarketEnv_Continuous/AC_TD_Triangular_MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_MarketEnv_Continuous_v2/AC_Q_Gaussian_MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_Q_Triangular_MarketEnv_Continuous/AC_Q_Triangular_MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_MarketEnv_Continuous_sarsa/AC_SARSA_Gaussian_MarketEnv_Continuous/g"`"
+policies="`echo "${policies}" | sed "s/AC_SARSA_Triangular_MarketEnv_Continuous/AC_SARSA_Gaussian_MarketEnv_Continuous/g"`"
 
-policies="`echo "${policies}" | sed "s/__marketenv_continuous//gI"`"
+policies="`echo "${policies}" | sed "s/_marketenv_continuous//gI"`"
 
 params="`grep "days per traj:" "${log_file}" | sed "s/days per traj://g" | sed "s/trajs per epoch://g" | sed "s/ EPOCHS://g" | tr -d " " | sed "s/,/_/g"`"
 
 lr="`grep -o "learning_rate:.*" "${log_file}" | sed "s/learning_rate://g" | tr -d " "`"
+if [[ -z "${lr}" ]]
+then
+     lr="`grep -io "lr: [0-9a-zA-Z-]*" ${log_file} | sed "s/lr://" | tr -d " "`"
+fi
 
 TIMESTAMP=`date "+%Y%m%d%H%M%S"`
 new_file_name="${experiment}__${params}__${lr}__${TIMESTAMP}"
@@ -62,6 +70,15 @@ fi
 
 copy_file="${new_file_name}.log"
 cp "${log_file}" "${copy_file}"
-echo "done: ${log_file} => ${copy_file}, ${csv_file}"
+mkdir -p "${output_dir}"
+mv "${copy_file}" "${output_dir}"
+mv "${csv_file}" "${output_dir}"
+
+if [[ -n "${delete_orig}" ]]
+then
+    rm -f "${log_file}"
+fi
+
+echo "done: ${log_file} => ${output_dir}/${copy_file}, ${output_dir}/${csv_file}"
 
 echo '============ = END = ============'
