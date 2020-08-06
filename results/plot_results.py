@@ -141,9 +141,9 @@ class Experiment:
             if len(y) != exp.experiment_config['num_epo']:
                 x = x[:len(y)]
             
-            x = x[:100]
-            y = y[:100]
-            e = e[:100]
+            # x = x[:1000]
+            # y = y[:1000]
+            # e = e[:1000]
             try:
                 if not plot_var:
                     e = None
