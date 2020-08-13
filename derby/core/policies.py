@@ -3264,6 +3264,7 @@ class AC_Q_Fourier_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
         # self.critic_dense4 = tf.keras.layers.Dense(1, dtype='float64')
 
         # self.critic_layer1_size = 6 + (self.num_subactions * self.num_dist_per_subaction)
+        self.c = None
         self.W1 = None
         # self.b1 = tf.Variable(tf.random.truncated_normal(shape=[self.critic_layer1_size], stddev=0.1, dtype=tf.float32))
         
@@ -3349,28 +3350,28 @@ class AC_Q_Fourier_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
                 i += 1
             return cart
 
-    def basis(self, n, x):
-        """
-        :param n: The order of the approximation.
-        :param x: An array of shape [batch_size, episode_length, x_dim].
-        :return: An array of shape [batch_size, episode_length, (n+1)^d], where each row of (n+1)^d
-        rows represents a basis function \phi_i(x).
-        """
-        # An array of shape [(n+1)^d, d], where d is x_dim.
-        c = self.repeated_cart_prod(tf.constant(range(n+1)), x.shape[-1])
-        # Broadcasting to array of shape [batch_size, episode_length, (n+1)^d, d].
-        c = tf.broadcast_to(c, [*x.shape[:2]] + [*c.shape])
-        c = tf.cast(c, x.dtype)
-        # Reshape to [batch_size, episode_length, x_dim, 1]. Note: x_dim = d.
-        x = x[:,:,:,None]
-        # Matrix multiply in order to compute c^i \dot x, for each row c^i in c.
-        # Shape is [batch_size, episode_length, (n+1)^d, 1].
-        dot_prds = tf.matmul(c, x)
-        # Reshape to [batch_size, episode_length, (n+1)^d].
-        dot_prds = tf.reshape(dot_prds, dot_prds.shape[:-1])
-        # Shape [batch_size, episode_length, (n+1)^d].
-        bases = tf.math.cos(tf.constant(math.pi, dtype=dot_prds.dtype) * dot_prds)
-        return bases
+    # def basis(self, n, x):
+    #     """
+    #     :param n: The order of the approximation.
+    #     :param x: An array of shape [batch_size, episode_length, x_dim].
+    #     :return: An array of shape [batch_size, episode_length, (n+1)^d], where each row of (n+1)^d
+    #     rows represents a basis function \phi_i(x).
+    #     """
+    #     # An array of shape [(n+1)^d, d], where d is x_dim.
+    #     c = self.repeated_cart_prod(tf.constant(range(n+1)), x.shape[-1])
+    #     # Broadcasting to array of shape [batch_size, episode_length, (n+1)^d, d].
+    #     c = tf.broadcast_to(c, [*x.shape[:2]] + [*c.shape])
+    #     c = tf.cast(c, x.dtype)
+    #     # Reshape to [batch_size, episode_length, x_dim, 1]. Note: x_dim = d.
+    #     x = x[:,:,:,None]
+    #     # Matrix multiply in order to compute c^i \dot x, for each row c^i in c.
+    #     # Shape is [batch_size, episode_length, (n+1)^d, 1].
+    #     dot_prds = tf.matmul(c, x)
+    #     # Reshape to [batch_size, episode_length, (n+1)^d].
+    #     dot_prds = tf.reshape(dot_prds, dot_prds.shape[:-1])
+    #     # Shape [batch_size, episode_length, (n+1)^d].
+    #     bases = tf.math.cos(tf.constant(math.pi, dtype=dot_prds.dtype) * dot_prds)
+    #     return bases
 
     def q_value_function(self, states, actions):
         """
@@ -3386,22 +3387,58 @@ class AC_Q_Fourier_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
         inputs = tf.concat([states, tf.reshape(actions, (*actions.shape[:2],-1))], axis=-1)
         
         n = 1
-        # Shape [batch_size, episode_length-1, (n+1)^d], where d = inputs.shape[-1].
-        bases = self.basis(n, inputs)
+        if (self.c is None):
+            # An array of shape [(n+1)^d, d], where d = new_state_size + (num_subactions * subaction_size).
+            self.c = self.repeated_cart_prod(tf.constant(range(n+1)), inputs.shape[-1])
+            self.c = tf.cast(self.c, inputs.dtype)
 
         if (self.W1 is None):
             # Shape [(n+1)^d, 1].
-            self.W1 = tf.Variable(tf.random.truncated_normal(shape=[bases.shape[-1], 1], stddev=0.1, dtype=bases.dtype))
+            self.W1 = tf.Variable(tf.random.truncated_normal(shape=[self.c.shape[0], 1], stddev=0.1, dtype=inputs.dtype))
 
-        # Reshape to [batch_size, episode_length-1, (n+1)^d, 1]
-        batch_W1 = tf.broadcast_to(self.W1, [*bases.shape[:2]] + [*self.W1.shape])
-        # Shape [batch_size, episode_length-1, 1, (n+1)^d].
-        bases = bases[:,:,None,:]
-        # Shape [batch_size, episode_length-1, 1, 1].
-        output = tf.matmul(bases, batch_W1)
-        # Shape [batch_size, episode_length-1].
-        output = tf.reshape(output, [*output.shape[:2]])
+        # t is of shape [episode_length-1, d].
+        # transposed c is of shape [d, (n+1)^d].
+        # matmul of t and transposed c is of shape [episode_length-1, (n+1)^d].
+        # matmul of result and W1 is of shape [episode_length-1, 1].
+        # map_fn repeats this for every batch, so final shape is [batch_size, episode_length-1, 1]
+        output = tf.map_fn(fn=lambda t: tf.matmul(
+                                    tf.math.cos(tf.constant(math.pi, dtype=inputs.dtype) * tf.matmul(t, self.c, transpose_b=True)), 
+                                    self.W1), 
+                            elems=inputs)
+        # Reshape to [batch_size, episode_length-1].
+        output = tf.reshape(output, (*output.shape[:1],-1))
         return output
+
+    # def q_value_function(self, states, actions):
+    #     """
+    #     Performs the forward pass on a batch of states to calculate the value function, to be used as the
+    #     critic in the loss function.
+
+    #     :param states: An array of shape [batch_size, episode_length-1, new_state_size], where new_state_size 
+    #     is single_agent_state_size if self.partial else num_of_agents * single_agent_state_size.
+    #     :param actions: an array of shape [batch_size, episode_length-1, num_subactions, subaction_size].
+    #     :return: A [batch_size, episode_length-1] matrix representing the value of each q-state.
+    #     """
+    #     # Array of shape [batch_size, episode_length-1, new_state_size + (num_subactions * subaction_size)].
+    #     inputs = tf.concat([states, tf.reshape(actions, (*actions.shape[:2],-1))], axis=-1)
+        
+    #     n = 1
+    #     # Shape [batch_size, episode_length-1, (n+1)^d], where d = inputs.shape[-1].
+    #     bases = self.basis(n, inputs)
+
+    #     if (self.W1 is None):
+    #         # Shape [(n+1)^d, 1].
+    #         self.W1 = tf.Variable(tf.random.truncated_normal(shape=[bases.shape[-1], 1], stddev=0.1, dtype=bases.dtype))
+
+    #     # Reshape to [batch_size, episode_length-1, (n+1)^d, 1]
+    #     batch_W1 = tf.broadcast_to(self.W1, [*bases.shape[:2]] + [*self.W1.shape])
+    #     # Shape [batch_size, episode_length-1, 1, (n+1)^d].
+    #     bases = bases[:,:,None,:]
+    #     # Shape [batch_size, episode_length-1, 1, 1].
+    #     output = tf.matmul(bases, batch_W1)
+    #     # Shape [batch_size, episode_length-1].
+    #     output = tf.reshape(output, [*output.shape[:2]])
+    #     return output
 
     def choose_actions(self, call_output):
         '''
