@@ -3369,7 +3369,7 @@ class AC_Q_Fourier_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
         # Reshape to [batch_size, episode_length, (n+1)^d].
         dot_prds = tf.reshape(dot_prds, dot_prds.shape[:-1])
         # Shape [batch_size, episode_length, (n+1)^d].
-        bases = tf.math.sin(tf.constant(math.pi, dtype=dot_prds.dtype) * dot_prds)
+        bases = tf.math.cos(tf.constant(math.pi, dtype=dot_prds.dtype) * dot_prds)
         return bases
 
     def q_value_function(self, states, actions):
