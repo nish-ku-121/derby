@@ -1219,7 +1219,7 @@ class Experiment:
         return None, None, None
 
 
-    def exp_19(self, num_days, num_trajs, num_epochs, lr, debug=False):
+    def exp_20(self, num_days, num_trajs, num_epochs, lr, debug=False):
         # Get a pre-defined environment
         env, auction_item_spec_ids = self.setup_1()
         
@@ -3731,7 +3731,7 @@ if __name__ == '__main__':
         'exp_15': experiment.exp_15, # AC_Q_Triangular vs. FixedBidPolicy
         'exp_16': experiment.exp_16, # AC_SARSA_Triangular vs. FixedBidPolicy
         'exp_17': experiment.exp_17, # AC_SARSA_Baseline_V_Gaussian vs. FixedBidPolicy
-        'exp_19': experiment.exp_19, # AC_Q_Fourier_Gaussian vs. FixedBidPolicy
+        'exp_20': experiment.exp_20, # AC_Q_Fourier_Gaussian vs. FixedBidPolicy
         'exp_100': experiment.exp_100, # REINFORCE_Gaussian vs. StepPolicy (increasing)
         'exp_101': experiment.exp_101, # REINFORCE_Baseline_Gaussian vs. StepPolicy (increasing)
         'exp_102': experiment.exp_102, # AC_TD_Gaussian vs. StepPolicy (increasing)
