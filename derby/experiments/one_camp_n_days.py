@@ -14,7 +14,8 @@ AC_Q_Triangular_MarketEnv_Continuous, AC_SARSA_Triangular_MarketEnv_Continuous, 
 REINFORCE_Gaussian_v2_MarketEnv_Continuous, REINFORCE_Gaussian_v3_MarketEnv_Continuous, \
 REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous, REINFORCE_Baseline_Gaussian_v3_MarketEnv_Continuous, \
 AC_TD_Gaussian_v2_MarketEnv_Continuous, AC_Q_Gaussian_v2_MarketEnv_Continuous, AC_SARSA_Gaussian_v2_MarketEnv_Continuous, \
-AC_SARSA_Baseline_V_Gaussian_MarketEnv_Continuous, AC_Q_Fourier_Gaussian_MarketEnv_Continuous
+AC_SARSA_Baseline_V_Gaussian_MarketEnv_Continuous, AC_Q_Fourier_Gaussian_MarketEnv_Continuous, \
+REINFORCE_Tabu_Gaussian_MarketEnv_Continuous
 from pprint import pprint
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -1218,8 +1219,8 @@ class Experiment:
         print("Took {} sec to train".format(end-start))
         return None, None, None
 
-
-    def exp_20(self, num_days, num_trajs, num_epochs, lr, debug=False):
+      
+    def exp_18(self, num_days, num_trajs, num_epochs, lr, debug=False):
         # Get a pre-defined environment
         env, auction_item_spec_ids = self.setup_1()
         
@@ -1230,6 +1231,58 @@ class Experiment:
         # Setup the agents of the game
         agents = [
                     Agent("agent1", 
+                        REINFORCE_Tabu_Gaussian_MarketEnv_Continuous(
+                            auction_item_spec_ids, learning_rate=lr, 
+                            budget_per_reach=scaled_avg_bpr, shape_reward=False
+                        ),
+                        scale_states_func, scale_actions_func,
+                        descale_actions_func
+                    ),
+                    Agent("agent2", FixedBidPolicy(5, 5))
+        ]
+
+        # Run the game
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        return None, None, None
+                  
+        
+    def exp_19(self, num_days, num_trajs, num_epochs, lr, debug=False):
+        # Get a pre-defined environment
+        env, auction_item_spec_ids = self.setup_1()
+        
+        # Get scaling/decaling info
+        scale_states_func, actions_scaler, \
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+
+        # Setup the agents of the game
+        agents = [
+                    Agent("agent1", 
+                        REINFORCE_Tabu_Gaussian_MarketEnv_Continuous(
+                            auction_item_spec_ids, learning_rate=lr, 
+                            budget_per_reach=scaled_avg_bpr, shape_reward=True
+                        ),
+                        scale_states_func, scale_actions_func,
+                        descale_actions_func
+                    ),
+                    Agent("agent2", FixedBidPolicy(5, 5))
+        ]
+
+        # Run the game
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        return None, None, None
+
+      
+    def exp_20(self, num_days, num_trajs, num_epochs, lr, debug=False):
+        # Get a pre-defined environment
+        env, auction_item_spec_ids = self.setup_1()
+        
+        # Get scaling/decaling info
+        scale_states_func, actions_scaler, \
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+
+        # Setup the agents of the game
+        agents = [
+                    Agent("agent1",
                         AC_Q_Fourier_Gaussian_MarketEnv_Continuous(
                             auction_item_spec_ids, learning_rate=lr, 
                             budget_per_reach=scaled_avg_bpr, shape_reward=False
@@ -1243,8 +1296,8 @@ class Experiment:
         # Run the game
         self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
         return None, None, None
-
-
+                      
+        
     def exp_100(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
@@ -3731,6 +3784,8 @@ if __name__ == '__main__':
         'exp_15': experiment.exp_15, # AC_Q_Triangular vs. FixedBidPolicy
         'exp_16': experiment.exp_16, # AC_SARSA_Triangular vs. FixedBidPolicy
         'exp_17': experiment.exp_17, # AC_SARSA_Baseline_V_Gaussian vs. FixedBidPolicy
+        'exp_18': experiment.exp_18, # REINFORCE_Tabu_Gaussian (w/o rwd shaping) vs. FixedBidPolicy
+        'exp_19': experiment.exp_19, # REINFORCE_Tabu_Gaussian (w rwd shaping) vs. FixedBidPolicy
         'exp_20': experiment.exp_20, # AC_Q_Fourier_Gaussian vs. FixedBidPolicy
         'exp_100': experiment.exp_100, # REINFORCE_Gaussian vs. StepPolicy (increasing)
         'exp_101': experiment.exp_101, # REINFORCE_Baseline_Gaussian vs. StepPolicy (increasing)
