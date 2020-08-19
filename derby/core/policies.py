@@ -1088,11 +1088,7 @@ class REINFORCE_Tabu_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
         output_mus = tf.nn.relu(output_mus)
         # variance needs to be a positive number.
         output_sigmas = self.budget_per_reach*tf.nn.softplus(output_sigmas)
-# DEBUG
-        # print("output:\n{}".format(output))
-        # print("mus:\n{}".format(tf.reduce_mean(output_mus, axis=0)))
-        # print("sigmas:\n{}".format(tf.reduce_mean(output_sigmas, axis=0)))
-#
+
         # reshape to [batch_size, episode_length, num_subactions, num_dist_per_subaction]
         output_mus = tf.reshape(output_mus, [*output_mus.shape[:2]] + [self.num_subactions, self.num_dist_per_subaction])
         output_sigmas = tf.reshape(output_sigmas, [*output_sigmas.shape[:2]] + [self.num_subactions, self.num_dist_per_subaction])
@@ -1210,15 +1206,15 @@ class REINFORCE_Tabu_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
         tabu_neg_logs = tf.clip_by_value(tabu_neg_logs, -1e9, 1e9)
         tabu_loss = tf.reduce_sum(tf.where(cuml_disc_rwds == 0, tf.reduce_sum(tabu_neg_logs, axis=1), 0.), axis=0)
 # DEBUG
-        # print("weights:\n{}".format(self.trainable_variables))
-        # print("actions:\n{}".format(actions))
-        print("avg. action_distr loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
-        print("avg. tabu_distr loc:\n{}".format(tf.reduce_mean(tabu_distr.loc, axis=0)))
-        print("avg. tabu_distr scale:\n{}".format(tf.reduce_mean(tabu_distr.scale, axis=0)))
-        # print("cuml_disc_rwds:\n{}".format(cuml_disc_rwds))
-        # print("tabu_neg_logs:\n{}".format(tabu_neg_logs))
-        print("total_loss: {}".format(total_loss))
-        print("tabu_loss: {}".format(tabu_loss))
+        # # print("weights:\n{}".format(self.trainable_variables))
+        # # print("actions:\n{}".format(actions))
+        # print("avg. action_distr loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
+        # print("avg. tabu_distr loc:\n{}".format(tf.reduce_mean(tabu_distr.loc, axis=0)))
+        # print("avg. tabu_distr scale:\n{}".format(tf.reduce_mean(tabu_distr.scale, axis=0)))
+        # # print("cuml_disc_rwds:\n{}".format(cuml_disc_rwds))
+        # # print("tabu_neg_logs:\n{}".format(tabu_neg_logs))
+        # print("total_loss: {}".format(total_loss))
+        # print("tabu_loss: {}".format(tabu_loss))
 #
         return 1.0*total_loss + 10.0*tabu_loss
 
