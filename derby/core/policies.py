@@ -1591,7 +1591,9 @@ class REINFORCE_Tabu_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
         self.mu_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, kernel_initializer=self.mu_ker_init, activation=None, dtype='float64')
         self.sigma_layer = tf.keras.layers.Dense(self.num_subactions*self.num_dist_per_subaction, kernel_initializer=self.sigma_ker_init, activation=None, dtype='float64')
         
-
+# DEBUG
+        self.resample_count = 0
+#
         self.tabu_layer1_size = 1
         self.tabu_layer1_ker_init = None
         self.tabu_mu_ker_init = tf.keras.initializers.RandomUniform(minval=0.001, maxval=0.001)
@@ -1721,7 +1723,14 @@ class REINFORCE_Tabu_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
         tabu_prbs = tabu_dist.prob(samples)[:,:,:,0:1]
         # With probability tabu_prbs, resample each sample.
         rand_generator = tf.random.get_global_generator()
-        samples = tf.where(rand_generator.uniform(tabu_prbs.shape, dtype=tabu_prbs.dtype) < tabu_prbs, policy_dist.sample(), samples)
+        rands = rand_generator.uniform(tabu_prbs.shape, dtype=tabu_prbs.dtype)
+        should_resample = rands < tabu_prbs
+# DEBUG
+        # print("rands: {}, tabu_prbs: {}".format(rands, tabu_prbs))
+        # print("should_resample: {}".format(should_resample))
+        self.resample_count += tf.math.count_nonzero(should_resample)
+#
+        samples = tf.where(should_resample, policy_dist.sample(), samples)
         # Clip the samples as needed.
         samples = tf.clip_by_value(samples, self.subactions_min, self.subactions_max)
 
@@ -1811,15 +1820,16 @@ class REINFORCE_Tabu_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
 # DEBUG
         # # print("weights:\n{}".format(self.trainable_variables))
         # # print("actions:\n{}".format(actions))
-        # print("avg. action_distr loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
-        # print("avg. tabu_distr loc:\n{}".format(tf.reduce_mean(tabu_distr.loc, axis=0)))
-        # print("avg. tabu_distr scale:\n{}".format(tf.reduce_mean(tabu_distr.scale, axis=0)))
+        print("resample_count: {}".format(self.resample_count))
+        print("avg. action_distr loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
+        print("avg. tabu_distr loc:\n{}".format(tf.reduce_mean(tabu_distr.loc, axis=0)))
+        print("avg. tabu_distr scale:\n{}".format(tf.reduce_mean(tabu_distr.scale, axis=0)))
         # # print("cuml_disc_rwds:\n{}".format(cuml_disc_rwds))
         # # print("tabu_neg_logs:\n{}".format(tabu_neg_logs))
         # print("total_loss: {}".format(total_loss))
-        # print("tabu_loss: {}".format(tabu_loss))
+        print("tabu_loss: {}".format(tabu_loss))
 #
-        return 1.0*total_loss + 10.0*tabu_loss
+        return (1.0*total_loss) + (10.0*tabu_loss)
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
         if tf_grad_tape is None:
@@ -1967,7 +1977,7 @@ class REINFORCE_Tabu_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.M
         output_offsets2 = self.tabu_offset2_layer(output)
 
         # lows need to be >= 0 because bids need to be >= 0.
-        output_lows = tf.nn.softplus(output_lows)
+        output_lows = tf.nn.relu(output_lows)
         # offsets need to be >= 0, so pass through softplus.
         output_offsets = tf.nn.softplus(output_offsets)
         # peaks need to be >= 0, so pass through softplus.
@@ -2012,6 +2022,7 @@ class REINFORCE_Tabu_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.M
         rand_generator = tf.random.get_global_generator()
         should_resample = rand_generator.uniform(tabu_prbs.shape, dtype=tabu_prbs.dtype) < tabu_prbs
 # DEBUG
+        # print("tabu_prbs: {}".format(tabu_prbs))
         self.resample_count += tf.math.count_nonzero(should_resample)
 #
         samples = tf.where(should_resample, policy_dist.sample(), samples)
@@ -2112,7 +2123,7 @@ class REINFORCE_Tabu_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.M
         # # print("cuml_disc_rwds:\n{}".format(cuml_disc_rwds))
         # # print("tabu_neg_logs:\n{}".format(tabu_neg_logs))
         # print("total_loss: {}".format(total_loss))
-        # print("tabu_loss: {}".format(tabu_loss))
+        print("tabu_loss: {}".format(tabu_loss))
 #
         return (1.0*total_loss) + (10.0*tabu_loss)
 

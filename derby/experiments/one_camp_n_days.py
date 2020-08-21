@@ -4374,7 +4374,7 @@ if __name__ == '__main__':
         'exp_17': experiment.exp_17, # AC_SARSA_Baseline_V_Gaussian vs. FixedBidPolicy
         'exp_18': experiment.exp_18, # REINFORCE_Tabu_Gaussian (w/o rwd shaping) vs. FixedBidPolicy
         'exp_19': experiment.exp_19, # REINFORCE_Tabu_Gaussian (w rwd shaping) vs. FixedBidPolicy
-        'exp_20': experiment.exp_20, # REINFORCE_Tabu_Gaussian (w rwd shaping) vs. FixedBidPolicy
+        'exp_20': experiment.exp_20, # AC_Q_Fourier_Gaussian (w/o rwd shaping) vs. FixedBidPolicy
         'exp_21': experiment.exp_21, # REINFORCE_Tabu_Gaussian_v2 vs. FixedBidPolicy
         'exp_100': experiment.exp_100, # REINFORCE_Gaussian vs. StepPolicy (increasing)
         'exp_101': experiment.exp_101, # REINFORCE_Baseline_Gaussian vs. StepPolicy (increasing)
