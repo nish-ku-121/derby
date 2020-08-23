@@ -30,15 +30,27 @@ class Agent:
     # Likewise, function to scale/normalize descaled actions.
     actions_scaler: Callable
 
-    def __init__(self, name: str, policy: AbstractPolicy):
+    def __init__(self, name: str, policy: AbstractPolicy, states_scaler=None, actions_scaler=None, actions_descaler=None):
         self.uid = next(type(self)._uid_generator)
         self.name = name
         self.policy = policy
         self.agent_num = None
         self.cumulative_rewards = None
-        self.states_scaler = lambda states : states
-        self.actions_descaler = lambda actions: actions
-        self.actions_scaler = lambda actions: actions
+
+        if states_scaler is None:
+            self.states_scaler = lambda states : states
+        else:
+            self.states_scaler = states_scaler
+
+        if actions_descaler is None:
+            self.actions_descaler = lambda actions: actions
+        else:
+            self.actions_descaler = actions_descaler
+
+        if actions_scaler is None:
+            self.actions_scaler = lambda actions: actions
+        else:
+            self.actions_scaler = actions_scaler
 # TODO: Github issue #29
         self.policy.agent = self
 #

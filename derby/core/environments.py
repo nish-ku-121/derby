@@ -26,7 +26,9 @@ def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, debug=False
                                                                 scale_states_func=scale_states_func,
                                                                 debug=debug,
                                                                 update_policies_after_every_step=update_policies_after_every_step)
-
+# # DEBUG
+#         print("actions:\n{}".format(actions))
+# #
         # tuple (agent, states for agent, actions for agent, rewards for agent, agent's policy loss)
         # for evey agent in env.agents.
         sarl_per_agent = []
@@ -443,12 +445,20 @@ class OneCampaignNDaysEnv(MarketEnv):
         return states, rewards, self.done
 
     def get_states_samples(self, num_of_samples=1):
+        '''
+        :return samples: an array of shape [num_of_samples, num_of_agents, state_size].
+        # If agents have not been set, num_of_agents defaults to 1.
+        '''
         samples = []
+        if self.agents is None:
+            temp_agents = [None]
+        else:
+            temp_agents = self.agents
         for i in range(num_of_samples):
             bidder_states = []
-            camps = self._campaign_pmf.draw_n(len(self.agents))
-            for i in range(len(self.agents)):
-                agent = self.agents[i]
+            camps = self._campaign_pmf.draw_n(len(temp_agents))
+            for i in range(len(temp_agents)):
+                agent = temp_agents[i]
                 camp = camps[i]
                 # choose between the "null" campaign and camp.
                 # to allow for better extrapolation/normalization.

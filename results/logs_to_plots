@@ -1,0 +1,26 @@
+#!/bin/bash
+
+
+
+## ARGUMENTS ##
+
+log_dir="$1"
+plots_dir="$2"
+plot_var="$3"
+delete_orig="$4"
+
+if [ $# -lt 3 ]; then
+    echo "Not enough arguments provided"
+    echo 'Usage: ' "`basename "$0"`" '<log dir> <plots dir> <plot var> <delete orig? (optional)>'
+    exit 1
+fi
+
+echo '============= START ============='
+log_dir="$(echo "${log_dir}" | sed 's:/*$::')"
+run_dir="$(basename ${log_dir})"
+results_dir="${log_dir%/}/converted"
+mkdir -p "${results_dir}"
+find "${log_dir}" -type f -iname "*.log" | xargs -I {} ./log_to_csv {} "${results_dir}" "${delete_orig}"
+python plot_results.py method_1 "${results_dir}" "${plots_dir%/}/${run_dir}" "${plot_var}"
+python plot_results.py method_2 "${results_dir}" "${plots_dir%/}/${run_dir}" "${plot_var}"
+echo '============ = END = ============'
