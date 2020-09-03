@@ -10,6 +10,7 @@ Original file is located at
 """
 
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import os
 import sys, traceback
@@ -133,8 +134,8 @@ class Experiment:
             if (type(y[len(y)-1]) is str) and (y[len(y)-1].lower() == 'failed'):
                 y = y[:-1]
                 e = e[:-1]
-                y = [float(item) for item in y]
-                e = [float(item) for item in e]
+                y = [np.clip(float(item), -500, 500) for item in y]
+                e = [np.clip(float(item), -500, 500) for item in e]
                 exp.experiment_config['agent_1_policy'] = exp.experiment_config['agent_1_policy'] + " (FAILED)"
             # A safe fail here: if the data is incomplete, graph what is available.
             # We could do something better here!
@@ -158,6 +159,7 @@ class Experiment:
         plt.title(', '.join([f"{x} : {e.experiment_config[x]} " for x in title_set]))
         plt.xlabel('epoch', fontsize=14)
         plt.ylabel('cumulative reward avg', fontsize=14)
+        plt.ylim([-25, 25])
         plt.legend(loc='lower right')
         try:
             os.mkdir(output_folder)
