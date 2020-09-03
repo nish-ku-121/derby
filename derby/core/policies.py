@@ -2358,7 +2358,7 @@ class REINFORCE_Baseline_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.
         losses = neg_logs * tf.stop_gradient(advantage)
         actor_loss = tf.reduce_sum(losses)
         critic_loss = tf.reduce_sum((advantage)**2)
-        total_loss = (1.0*actor_loss) + (0.5*critic_loss)
+        total_loss = (1.0*actor_loss) + (1.0*critic_loss)
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -7822,7 +7822,7 @@ class AC_SARSA_Baseline_V_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras
         actor_loss = tf.reduce_sum(losses)
         critic_loss = tf.reduce_sum((target - q_state_values)**2)
         baseline_loss = tf.reduce_sum((discounted_rewards - baseline)**2)
-        total_loss = (1.0*actor_loss) + (0.5*critic_loss) + (0.5*baseline_loss)
+        total_loss = (1.0*actor_loss) + (1.0*critic_loss) + (1.0*baseline_loss)
 # DEBUG
         # print("q_state_values:\n{}".format(q_state_values))
         # print("state_values:\n{}".format(baseline))
