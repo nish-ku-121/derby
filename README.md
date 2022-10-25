@@ -4,7 +4,9 @@ See:
 https://stackoverflow.com/questions/6323860/sibling-package-imports/50193944#50193944
 On how to run
 
-See Adx_Research.pdf for the accompanying research project. 
+See Adx_Research.pdf for the accompanying full research project paper.
+
+See Adx_Research_Summary.pdf for a brief summary of results.
 
 Derby is a simple bidding, auction, and *market* framework for creating
 and running auction or market games. Environments in derby can be
