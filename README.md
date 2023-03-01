@@ -1,14 +1,4 @@
-README is Work-In-Progress.
-
-See:
-https://stackoverflow.com/questions/6323860/sibling-package-imports/50193944#50193944
-On how to run
-
-See Adx_Research.pdf for the accompanying full research project paper.
-
-See Adx_Research_Summary.pdf for a brief summary of results.
-
-Derby is a simple bidding, auction, and *market* framework for creating
+Derby is a bidding, auction, and *market* framework for creating
 and running auction or market games. Environments in derby can be
 interfaced in a similar fashion as environments in OpenAI’s gym:
 
@@ -39,3 +29,47 @@ A *market* can be thought of as a stateful, repeated auction:
 
 -   Each bidder’s state is updated at the end of every day. The state
     can track information such as auction items bought and amount spent.
+
+
+Derby was created by [Nishant Kumar](https://github.com/nish-ku-121) for use in his grad school research project (in collaboration with Prof. Amy Greenwald and fellow student [Enrique Areyan](https://github.com/eareyan)).
+
+See [AdX RL Research Summary](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Summary.pdf) for a brief summary.
+
+The goal of the project was to apply (deep) reinforcement learning to the _AdX Game_. The AdX Game crudely models the digital advertising domain: advertisers buy _impression opportunities_ from websites, where the objective of each advertiser is to minimize spend and the objective of each website is to maximize revenue. This buying and selling is usually done through an _ad exchange_ (e.g. Google's AdX), which canonically holds digital auctions; the bidders are advertisers and the goods being sold are impression opportunities. In the AdX Game, each player plays the role of an _advertiser liaison_: advertisers procure _ad campaigns_ to liaisons, who are responsible for fulfilling the campaign within a certain time frame. The goal of each player is to learn what bids to place in order to maximize their profit by the end of the game.
+
+(See pages 2 to 3 of [AdX RL Research Summary](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Summary.pdf) for the game definition)
+
+The AdX game is interesting to tackle from a reinforcement learning perspective because it poses several interesting properties and challenges: 
+- Stochasticity in the game can be a consequence of both the randomness of an impression opportunity's demographic(s) and the randomness of each player's strategy (i.e. players playing mixed strategies).
+- Determining an optimal policy via _planning_ is difficult because determining a model _a priori_ is difficult or infeasible.
+-  The domain offers continuous control, as bids are real-valued. Furthermore, the domain can be highly dimensional, as there can be many types of demographics. Consequently exhaustive search of the space is often infeasible or intractable, thus smart exploration and/or generalization is required.
+- The domain can be examined from both a single-agent perspective and a multi-agent perspective.
+
+(See pages 8 to 11 of [AdX RL Research Summary](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Summary.pdf) for an RL formulation)
+
+Algorithms derived, tested, and tuned include:
+- Multi-Agent REINFORCE (with and without baseline)
+- Multi-Agent Actor-Critic Q (with baseline)
+- Multi-Agent Actor-Critic TD (has baseline)
+- Multi-Agent Actor-Critic SARSA (with baseline)
+
+(See pages 8 to 26 of[AdX RL Research Full](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Full.pdf) for algorithms and their derivations)
+
+For all algorithms, the policy network learns a Gaussian distribution using a neural net architecture.
+
+For algorithms that learn Q or V, the value network has a standard setup: one or more dense layers taking state (and action for Q) as input and returning a Q or V value as output. Assume ReLU activation functions.
+
+Challenges, tips, and tricks can be found on pages 28 to 34 of [AdX RL Research Full](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Full.pdf).
+
+Some results can be found:
+- Pages 5 to 6 of [AdX RL Research Summary](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Summary.pdf)
+- Page 35 of [AdX RL Research Full](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Full.pdf)
+- Pages 4 to 11 of [AdX Research Select Results](https://github.com/nish-ku-121/derby/blob/master/AdX%20RL%20Research%20Select%20Results.pdf)
+
+
+
+See:
+
+https://stackoverflow.com/questions/6323860/sibling-package-imports/50193944#50193944
+
+On how to run
