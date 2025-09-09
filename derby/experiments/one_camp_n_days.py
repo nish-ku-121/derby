@@ -138,35 +138,32 @@ class Experiment:
         actions_scaler.fit(budget_samples)
 
         def descale_actions_func(scaled_actions):
-            # Assuming scaled_actions is of shape [batch_size, episode_length, num_of_subactions, subactions_size],
-            # where subactions_size is bid_vector_size (i.e. vector [auction_item_spec_id, bid_per_item, total_limit]).
-            # Slice out the 1st field of the vector (i.e. the auction_item_spec_id field).
-            sa_without_ais = scaled_actions[:,:,:,1:]
-            # Reshaping from [batch_size, episode_length, num_of_subactions, subactions_size-1]
-            # to [batch_size * episode_length * num_of_subactions, subactions_size-1]
-            sa_without_ais_reshp = sa_without_ais.reshape(-1, sa_without_ais.shape[-1])
-            # Descale the remaining fields of the bid vectors (i.e. [bid_per_item, total_limit]).
-            descaled_actions_without_ais = actions_scaler.inverse_transform(sa_without_ais_reshp)
-            # Reshape back to [batch_size, episode_length, num_of_subactions, subactions_size-1]
-            descaled_actions_without_ais = descaled_actions_without_ais.reshape(sa_without_ais.shape)
-            # Concatenate the sliced out 1st fields with the descaled other fields.
-            descaled_actions = np.concatenate((scaled_actions[:,:,:,0:1], descaled_actions_without_ais), axis=3)
+            # scaled_actions: [batch, episode, num_subactions, subactions_size]
+            # subactions_size: [auction_item_spec_id, bid_per_item, total_limit]
+            sa_without_ais = scaled_actions[:, :, :, 1:]
+            sa_reshaped = sa_without_ais.reshape(-1, sa_without_ais.shape[-1])  # (N, 2)
+            # Apply the scaler (fit on (N,1)) to both columns by repeating the scaler's inverse_transform
+            # on each column independently, then stacking
+            bid_per_item = sa_reshaped[:, 0:1]
+            total_limit = sa_reshaped[:, 1:2]
+            bid_per_item_descaled = actions_scaler.inverse_transform(bid_per_item)
+            total_limit_descaled = actions_scaler.inverse_transform(total_limit)
+            descaled = np.concatenate([bid_per_item_descaled, total_limit_descaled], axis=1)
+            descaled_actions_without_ais = descaled.reshape(sa_without_ais.shape)
+            descaled_actions = np.concatenate((scaled_actions[:, :, :, 0:1], descaled_actions_without_ais), axis=3)
             return descaled_actions
 
         def scale_actions_func(descaled_actions):
-            # Assuming scaled_actions is of shape [batch_size, episode_length, num_of_subactions, subactions_size],
-            # where subactions_size is bid_vector_size (i.e. vector [auction_item_spec_id, bid_per_item, total_limit]).
-            # Slice out the 1st field of the vector (i.e. the auction_item_spec_id field).
-            da_without_ais = descaled_actions[:,:,:,1:]
-            # Reshaping from [batch_size, episode_length, num_of_subactions, subactions_size-1]
-            # to [batch_size * episode_length * num_of_subactions, subactions_size-1]
-            da_without_ais_reshp = da_without_ais.reshape(-1, da_without_ais.shape[-1])
-            # Scale the remaining fields of the bid vectors (i.e. [bid_per_item, total_limit]).
-            scaled_actions_without_ais = actions_scaler.transform(da_without_ais_reshp)
-            # Reshape back to [batch_size, episode_length, num_of_subactions, subactions_size-1]
-            scaled_actions_without_ais = scaled_actions_without_ais.reshape(da_without_ais.shape)
-            # Concatenate the sliced out 1st fields with the scaled other fields.
-            scaled_actions = np.concatenate((descaled_actions[:,:,:,0:1], scaled_actions_without_ais), axis=3)
+            # descaled_actions: [batch, episode, num_subactions, subactions_size]
+            da_without_ais = descaled_actions[:, :, :, 1:]
+            da_reshaped = da_without_ais.reshape(-1, da_without_ais.shape[-1])  # (N, 2)
+            bid_per_item = da_reshaped[:, 0:1]
+            total_limit = da_reshaped[:, 1:2]
+            bid_per_item_scaled = actions_scaler.transform(bid_per_item)
+            total_limit_scaled = actions_scaler.transform(total_limit)
+            scaled = np.concatenate([bid_per_item_scaled, total_limit_scaled], axis=1)
+            scaled_actions_without_ais = scaled.reshape(da_without_ais.shape)
+            scaled_actions = np.concatenate((descaled_actions[:, :, :, 0:1], scaled_actions_without_ais), axis=3)
             return scaled_actions
 
         return actions_scaler, scale_actions_func, descale_actions_func
