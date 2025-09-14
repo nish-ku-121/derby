@@ -107,6 +107,8 @@ class Bid:
         # changed to >=0 instead of >0.
         assert self.total_limit >= 0
         # A bid cannot be bigger than its limit, since in the worst case a bidder could end up paying a price arbitrarily close to its bid.
+        if not (self.bid_per_item <= self.total_limit):
+            print(f"Bid assertion failed: bid_per_item={self.bid_per_item}, total_limit={self.total_limit}, bidder={self.bidder}, auction_item_spec={self.auction_item_spec}")
         assert self.bid_per_item <= self.total_limit
 
     def __eq__(self, other):

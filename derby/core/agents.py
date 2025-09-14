@@ -101,7 +101,7 @@ class Agent:
         states = self.convert_to_tf_tensor_if_needed(self.states_scaler(states))
         actions = self.convert_to_tf_tensor_if_needed(self.actions_scaler(actions))
         rewards = self.convert_to_tf_tensor_if_needed(rewards)
-        return self.policy.loss(states, actions, rewards)
+        return self.policy.policy_loss(states, actions, rewards)
 
     def update_policy(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
         '''

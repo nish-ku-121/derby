@@ -27,19 +27,15 @@ class AbstractPolicy(ABC):
         self.is_tensorflow = is_tensorflow # used by Agent class to send input as tf.tensor
         self.discount_factor = discount_factor
 
-    @abstractmethod
     def states_fold_type(self):
-        return AbstractEnvironment.FOLD_TYPE_SINGLE
+        raise NotImplementedError("Subclasses must implement states_fold_type()")
 
-    @abstractmethod
     def actions_fold_type(self):
-        return AbstractEnvironment.FOLD_TYPE_SINGLE
+        raise NotImplementedError("Subclasses must implement actions_fold_type()")
 
-    @abstractmethod
     def rewards_fold_type(self):
-        return AbstractEnvironment.FOLD_TYPE_SINGLE
+        raise NotImplementedError("Subclasses must implement rewards_fold_type()")
 
-    @abstractmethod
     def call(self, states):
         '''
         :param states: an array of shape [batch_size, episode_length, ...], where 
@@ -48,18 +44,16 @@ class AbstractPolicy(ABC):
         an intermediary (e.g. logits, probs, etc.) which can be used by choose_actions() 
         to determine actual actions to take.
         '''
-        pass
+        raise NotImplementedError("Subclasses must implement call()")
 
-    @abstractmethod
     def choose_actions(self, call_output):
         '''
         :param call_output: the output of call().
         :return: an array of shape [batch_size, episode_length] with actual actions choosen in some way.
         '''
-        pass
+        raise NotImplementedError("Subclasses must implement choose_actions()")
 
-    @abstractmethod
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Computes the policy's loss.
         :param states: an array of shape [batch_size, episode_length, ...], where 
@@ -70,9 +64,8 @@ class AbstractPolicy(ABC):
         "..." means the array is assumed to be folded according to rewards_fold_type().
         :return: the policy's loss.
         '''
-        pass
+        raise NotImplementedError("Subclasses must implement policy_loss()")
 
-    @abstractmethod
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
         '''
         Updates the policy.
@@ -168,7 +161,7 @@ class FixedBidPolicy(AbstractPolicy):
     def choose_actions(self, call_output):
         return call_output
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         return 0
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -224,7 +217,7 @@ class BudgetPerReachPolicy(AbstractPolicy):
     def choose_actions(self, call_output):
         return call_output
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: an array of shape [batch_size, episode_length, state_size].
@@ -293,7 +286,7 @@ class StepPolicy(AbstractPolicy):
     def choose_actions(self, call_output):
         return call_output
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         return 0
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -369,7 +362,7 @@ class DummyREINFORCE(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.gather(self.choices, tf.concat(sample_action_indices, axis=1))
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -535,7 +528,7 @@ class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -709,7 +702,7 @@ class REINFORCE_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -753,11 +746,6 @@ class REINFORCE_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
         neg_logs = tf.clip_by_value(neg_logs, -1e9, 1e9)
         losses = neg_logs * advantage
         total_loss = tf.reduce_sum(losses)
-# DEBUG
-        print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
-        print("avg. advtg:\n{}".format(tf.reduce_mean(advantage, axis=0)))
-        print("tot loss: {}".format(total_loss))
-#
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -914,7 +902,7 @@ class REINFORCE_Gaussian_v2_1_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -958,11 +946,6 @@ class REINFORCE_Gaussian_v2_1_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
         neg_logs = tf.clip_by_value(neg_logs, -1e9, 1e9)
         losses = neg_logs * advantage
         total_loss = tf.reduce_sum(losses)
-# DEBUG
-        print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
-        print("avg. advtg:\n{}".format(tf.reduce_mean(advantage, axis=0)))
-        print("tot loss: {}".format(total_loss))
-#
         return total_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):
@@ -1107,7 +1090,7 @@ class REINFORCE_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -1307,7 +1290,7 @@ class REINFORCE_Gaussian_v3_1_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -1500,7 +1483,7 @@ class REINFORCE_Gaussian_v4_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -1764,7 +1747,7 @@ class REINFORCE_Tabu_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
 
         '''
         Updates the policy.
@@ -2059,7 +2042,7 @@ class REINFORCE_Tabu_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.M
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
 
         '''
         Updates the policy.
@@ -2361,7 +2344,7 @@ class REINFORCE_Tabu_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.M
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
 
         '''
         Updates the policy.
@@ -2562,7 +2545,7 @@ class REINFORCE_Uniform_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -2739,7 +2722,7 @@ class REINFORCE_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -2935,7 +2918,7 @@ class REINFORCE_Baseline_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -3130,7 +3113,7 @@ class REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.ker
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -3340,7 +3323,7 @@ class REINFORCE_Baseline_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.ker
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -3561,7 +3544,7 @@ class REINFORCE_Baseline_Gaussian_v3_1_MarketEnv_Continuous(AbstractPolicy, tf.k
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -3771,7 +3754,7 @@ class REINFORCE_Baseline_Gaussian_v4_MarketEnv_Continuous(AbstractPolicy, tf.ker
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -3978,7 +3961,7 @@ class REINFORCE_Baseline_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.kera
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -4191,7 +4174,7 @@ class REINFORCE_Baseline_LogNormal_v3_1_MarketEnv_Continuous(AbstractPolicy, tf.
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -4405,7 +4388,7 @@ class AC_TD_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -4601,7 +4584,7 @@ class AC_TD_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
 
         '''
         Updates the policy.
@@ -4819,7 +4802,7 @@ class AC_TD_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
 
         '''
         Updates the policy.
@@ -5048,7 +5031,7 @@ class AC_TD_Gaussian_v3_1_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
 
         '''
         Updates the policy.
@@ -5266,7 +5249,7 @@ class AC_TD_Gaussian_v4_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
 
         '''
         Updates the policy.
@@ -5481,7 +5464,7 @@ class AC_TD_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -5685,7 +5668,7 @@ class AC_Q_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -5894,7 +5877,7 @@ class AC_Q_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -6186,7 +6169,7 @@ class AC_Q_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -6412,7 +6395,7 @@ class AC_Q_Gaussian_v4_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -6655,7 +6638,7 @@ class AC_Q_Baseline_V_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -6905,7 +6888,7 @@ class AC_Q_Baseline_V_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -7235,7 +7218,7 @@ class AC_Q_Fourier_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -7516,7 +7499,7 @@ class AC_Q_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -7720,7 +7703,7 @@ class AC_SARSA_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -7933,7 +7916,7 @@ class AC_SARSA_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -8152,7 +8135,7 @@ class AC_SARSA_Triangular_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -8381,7 +8364,7 @@ class AC_SARSA_Baseline_V_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras
         chosen_actions = tf.concat([ais_reshp, samples], axis=3)
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -8631,7 +8614,7 @@ class AC_SARSA_Baseline_V_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.ke
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -8907,7 +8890,7 @@ class AC_SARSA_Baseline_V_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.ke
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -9179,7 +9162,7 @@ class AC_SARSA_Baseline_V_Gaussian_v3_1_MarketEnv_Continuous(AbstractPolicy, tf.
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
@@ -9440,7 +9423,7 @@ class AC_SARSA_Baseline_V_Gaussian_v4_MarketEnv_Continuous(AbstractPolicy, tf.ke
 
         return chosen_actions
 
-    def loss(self, states, actions, rewards):
+    def policy_loss(self, states, actions, rewards):
         '''
         Updates the policy.
         :param states: An array of shape [batch_size, episode_length, new_state_size], 
