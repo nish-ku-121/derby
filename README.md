@@ -51,9 +51,14 @@ This project is designed to run using Docker. You only need Docker installed—n
 
 To run an experiment (for example, the `one_camp_n_days` experiment), use:
 ```bash
-make docker-run ARGS="poetry run python -m derby.experiments.one_camp_n_days <experiment_name> <num_agents> <num_days> <horizon> <learning_rate>"
+make docker-run ARGS="poetry run python -u -m derby.experiments.one_camp_n_days <experiment_name> <num_days> <num_trajs> <num_epochs> <learning_rate>"
 ```
 Replace the arguments as needed for your experiment.
+
+e.g.
+```bash
+make docker-run ARGS="poetry run python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
+```
 
 ## Rebuilding the Poetry Lock File
 
