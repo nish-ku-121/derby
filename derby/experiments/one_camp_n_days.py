@@ -3,7 +3,7 @@ from derby.core.basic_structures import AuctionItemSpecification
 from derby.core.ad_structures import Campaign
 from derby.core.auctions import KthPriceAuction
 from derby.core.pmfs import PMF
-from derby.core.environments import train, generate_trajectories, OneCampaignNDaysEnv
+from derby.core.environments import train, generate_trajectories, OneCampaignNDaysEnv, train_epoch
 from derby.core.agents import Agent
 from derby.core.policies import *
 from pprint import pprint
@@ -16,6 +16,214 @@ import tensorflow as tf
 
 # Killing optional CPU driver warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+
+def get_states_scaler_descaler_tf(samples):
+    """
+    TF-native state scaler/descaler, multi-agent aware.
+    :param samples: tf.Tensor or np.array of shape [num_samples, num_agents, state_size_per_agent]
+    :return: (scale_states_func, descale_states_func)
+    """
+    samples = tf.convert_to_tensor(samples, dtype=tf.float32)
+    num_agents = tf.shape(samples)[1]
+    state_size = tf.shape(samples)[2]
+
+    # Flatten to [num_samples, num_agents * state_size] for scaling
+    samples_flat = tf.reshape(samples, [-1, num_agents * state_size])
+    min_vals = tf.reduce_min(samples_flat, axis=0)
+    max_vals = tf.reduce_max(samples_flat, axis=0)
+    scale = tf.where(max_vals - min_vals == 0, tf.ones_like(min_vals), max_vals - min_vals)
+
+    def scale_states_func(states):
+        states = tf.convert_to_tensor(states, dtype=tf.float32)
+        states_flat = tf.reshape(states, [-1, num_agents * state_size])
+        scaled_flat = (states_flat - min_vals) / scale
+        return tf.reshape(scaled_flat, tf.shape(states))
+
+    def descale_states_func(states):
+        states = tf.convert_to_tensor(states, dtype=tf.float32)
+        states_flat = tf.reshape(states, [-1, num_agents * state_size])
+        descaled_flat = states_flat * scale + min_vals
+        return tf.reshape(descaled_flat, tf.shape(states))
+
+    return scale_states_func, descale_states_func
+
+
+def get_actions_scaler_descaler_tf(samples, debug=False):
+    """
+    TF-native action scaler/descaler operating in LATENT space.
+
+    Original action semantics (policy ground truth):
+      per subaction vector = [auction_item_spec_id, bid_per_item, total_limit]
+      where total_limit = bid_per_item * multiplier, multiplier >= 1.
+
+    We scale (bid_per_item, multiplier) instead of (bid_per_item, total_limit) to
+    preserve the multiplicative invariant exactly after a scale->descale cycle.
+
+    Scaled representation returned by scale_actions_func:
+      [auction_item_spec_id, scaled_bid, scaled_multiplier]
+
+    Descaled representation expected by the environment / policy_loss:
+      [auction_item_spec_id, bid_per_item, total_limit]
+
+    Ranges:
+      bid  in [bid_min, bid_max] (estimated from state samples' budget column fallback)
+      mult in [mult_min, mult_max] (fixed; adjust if saturation logs appear)
+
+    NOTE: If values exceed the max range during training they are clipped
+    prior to scaling. This keeps invariants but introduces a cap; widen
+    ranges if clipping becomes frequent.
+    """
+    samples = tf.convert_to_tensor(samples, dtype=tf.float32)
+
+    # Heuristic proxy for choosing an initial bid scale from state samples:
+    # Use the max of column 1 (often budget-like) if available; fallback to 1.0.
+    samples_flat = tf.reshape(samples, [-1, tf.shape(samples)[-1]])
+    if tf.shape(samples_flat)[1] >= 2:
+        proxy_col = samples_flat[:, 1]
+        bid_max = tf.reduce_max(proxy_col)
+    else:
+        bid_max = tf.constant(1.0, dtype=tf.float32)
+    bid_max = tf.maximum(bid_max, 1.0)  # ensure non-zero
+    bid_min = tf.constant(0.0, dtype=tf.float32)
+    bid_range = bid_max - bid_min
+
+    # Multiplier fixed range. Adjust if saturation warnings appear frequently.
+    mult_min = tf.constant(1.0, dtype=tf.float32)
+    mult_max = tf.constant(5.0, dtype=tf.float32)
+    mult_range = mult_max - mult_min
+
+    def scale_actions_func(actions):
+        """Scale real actions to latent scaled representation.
+        Input actions assumed shape [..., 3]: [spec_id, bid, total_limit].
+        Output shape [..., 3]: [spec_id, scaled_bid, scaled_multiplier]."""
+        actions = tf.convert_to_tensor(actions, dtype=tf.float32)
+        spec = actions[..., 0:1]
+        bid = actions[..., 1:2]
+        limit = actions[..., 2:3]
+        # multiplier = limit / bid (guard bid==0). If bid==0 define multiplier=1.
+        multiplier = tf.where(bid > 0, limit / tf.maximum(bid, 1e-9), tf.ones_like(limit))
+        # Clip multiplier into predefined range (preserve invariant but cap extremes)
+        multiplier_clipped = tf.clip_by_value(multiplier, mult_min, mult_max)
+        # Scale bid (clip if policy produces > bid_max later)
+        bid_scaled = tf.clip_by_value((bid - bid_min)/bid_range, 0.0, 1.0)
+        mult_scaled = (multiplier_clipped - mult_min)/mult_range
+        scaled = tf.concat([spec, bid_scaled, mult_scaled], axis=-1)
+        try:
+            print("DEBUG latent_scale: bid_min/max=", float(bid_min.numpy()), float(bid_max.numpy()),
+                  " mult_min/max=", float(mult_min.numpy()), float(mult_max.numpy()))
+            print("DEBUG latent_scale: raw sample=", actions[0,0,0].numpy() if len(actions.shape)>=3 else actions[0].numpy())
+            print("DEBUG latent_scale: scaled sample=", scaled[0,0,0].numpy() if len(scaled.shape)>=3 else scaled[0].numpy())
+        except Exception:
+            pass
+        return scaled
+
+    def descale_actions_func(actions):
+        """Descale latent scaled representation back to physical action space.
+        Input actions shape [..., 3]: [spec_id, scaled_bid, scaled_multiplier].
+        Output shape [..., 3]: [spec_id, bid, total_limit]."""
+        actions = tf.convert_to_tensor(actions, dtype=tf.float32)
+        spec = actions[..., 0:1]
+        bid_scaled = actions[..., 1:2]
+        mult_scaled = actions[..., 2:3]
+        
+        # Check for out-of-range values (should be in [0,1] for a well-behaved policy)
+        bid_out_of_range = tf.logical_or(bid_scaled < 0.0, bid_scaled > 1.0)
+        mult_out_of_range = tf.logical_or(mult_scaled < 0.0, mult_scaled > 1.0)
+        
+        if tf.reduce_any(bid_out_of_range) or tf.reduce_any(mult_out_of_range):
+            try:
+                bid_min_val = tf.reduce_min(bid_scaled).numpy()
+                bid_max_val = tf.reduce_max(bid_scaled).numpy()
+                mult_min_val = tf.reduce_min(mult_scaled).numpy()
+                mult_max_val = tf.reduce_max(mult_scaled).numpy()
+                print(f"WARNING: Policy output out of expected [0,1] range!")
+                print(f"  bid_scaled range: [{bid_min_val:.3f}, {bid_max_val:.3f}]")
+                print(f"  mult_scaled range: [{mult_min_val:.3f}, {mult_max_val:.3f}]")
+                print("  This suggests policy instability or incorrect scaling.")
+            except Exception:
+                print("WARNING: Policy output contains extreme values (NaN/inf)")
+        
+        # Only clip extreme values that would cause numerical issues (NaN, inf)
+        # but preserve out-of-range values that indicate policy problems
+        bid_scaled = tf.where(tf.math.is_finite(bid_scaled), bid_scaled, 0.0)
+        mult_scaled = tf.where(tf.math.is_finite(mult_scaled), mult_scaled, 0.0)
+        
+        # Clip only the most extreme values to prevent overflow/underflow
+        bid_scaled = tf.clip_by_value(bid_scaled, -10.0, 10.0)
+        mult_scaled = tf.clip_by_value(mult_scaled, -10.0, 10.0)
+        
+        bid = bid_scaled * bid_range + bid_min
+        multiplier = mult_scaled * mult_range + mult_min
+        total_limit = bid * multiplier
+        descaled = tf.concat([spec, bid, total_limit], axis=-1)
+        if debug:
+            print("DEBUG latent_descale: scaled sample=", actions[0,0,0].numpy() if len(actions.shape)>=3 else actions[0].numpy())
+            print("DEBUG latent_descale: descaled sample=", descaled[0,0,0].numpy() if len(descaled.shape)>=3 else descaled[0].numpy())
+            # Invariant check quick
+            if tf.reduce_any(bid > total_limit + 1e-6):
+                print("WARNING invariant violated post-descale (should not happen)")
+        return descaled
+
+    return scale_actions_func, descale_actions_func
+
+
+def get_transformed(env, debug=False):
+    """
+    Sample states from env and return TF-native scaling functions
+    and scaled avg_budget_per_reach.
+    Works with both single-agent (2D) and multi-agent (3D) inputs.
+    """
+    # 1. Sample states
+    samples = env.get_states_samples(10000)
+    samples = tf.convert_to_tensor(samples, dtype=tf.float32)
+
+    # Ensure 3D: [num_samples, num_agents, state_size]
+    if len(samples.shape) == 2:
+        samples = tf.expand_dims(samples, axis=1)
+
+    # 2. Get TF-native state and action scalers
+    scale_states_func, descale_states_func = get_states_scaler_descaler_tf(samples)
+    scale_actions_func, descale_actions_func = get_actions_scaler_descaler_tf(samples, debug=debug)
+
+    # 3. Compute avg_budget_per_reach safely
+    mask = tf.logical_not(tf.logical_and(samples[:, :, 0] == 0, samples[:, :, 1] == 0))
+    valid_budgets = tf.boolean_mask(samples[:, :, 1], mask)
+    valid_reaches = tf.boolean_mask(samples[:, :, 0], mask)
+    avg_budget_per_reach = tf.reduce_mean(valid_budgets / valid_reaches)
+
+    # 4. Create dummy action tensor of shape [1,1,1,3]
+    # We set total_limit = bid here so multiplier = 1 (latent neutral element).
+    dummy_action = tf.zeros([1, 1, 1, 3], dtype=tf.float32)
+    dummy_action = tf.tensor_scatter_nd_update(dummy_action, [[0, 0, 0, 1]], [avg_budget_per_reach])
+    dummy_action = tf.tensor_scatter_nd_update(dummy_action, [[0, 0, 0, 2]], [avg_budget_per_reach])
+
+    # 5. Scale dummy action to get scaled_avg_bpr (we only take scaled bid component)
+    scaled_dummy = scale_actions_func(dummy_action)
+    scaled_avg_bpr_value = scaled_dummy[0, 0, 0, 1].numpy()
+
+    return scale_states_func, scale_actions_func, descale_actions_func, scaled_avg_bpr_value
+
+
+def run(env, agents, num_days, num_trajs, num_epochs, horizon_cutoff=100, debug=False):
+    env.vectorize = True
+    env.init(agents, num_days)
+
+    print(f"days per traj: {num_days}, trajs per epoch: {num_trajs}, EPOCHS: {num_epochs}")
+    print(f"agent policies: {[agent.policy for agent in env.agents]}")
+
+    start = time.time()
+    for epoch in range(num_epochs):
+        # Use agent-attached scalers, no need to pass anything extra
+        summary = train_epoch(env, num_trajs, horizon_cutoff, discount=1.0, debug=debug)
+
+        formatted = [(name, mean, std) for name, (mean, std) in summary.items()]
+        print(f"epoch: {epoch}, avg and std rwds: {formatted}")
+
+    end = time.time()
+    print(f"Took {end - start:.2f} sec to train")
+    return summary
+
 
 
 
@@ -63,7 +271,7 @@ class Experiment:
         num_items_per_timestep_min = 1
         num_items_per_timestep_max = 2
         env = OneCampaignNDaysEnv(auction, auction_item_spec_pmf, campaign_pmf,
-                                  num_items_per_timestep_min, num_items_per_timestep_max)
+                                  num_items_per_timestep_min, num_items_per_timestep_max, debug=debug)
         return env, auction_item_spec_ids
 
 
@@ -92,125 +300,151 @@ class Experiment:
         return env, auction_item_spec_ids
 
 
-    def get_states_scaler_descaler(self, samples): 
-        '''
-        :param samples: an array of shape [num_of_samples, num_of_agents, state_size]
-        containing samples of states of the environment.
-        '''
-        samples_shape = samples.shape
-        # reshape to [num_of_samples * num_of_agents, state_size]
-        samples = samples.reshape(-1, samples_shape[-1])
-        states_scaler = MinMaxScaler()
-        states_scaler.fit(samples)
+    # def get_states_scaler_descaler(self, samples): 
+    #     '''
+    #     :param samples: an array of shape [num_of_samples, num_of_agents, state_size]
+    #     containing samples of states of the environment.
+    #     '''
+    #     samples_shape = samples.shape
+    #     # reshape to [num_of_samples * num_of_agents, state_size]
+    #     samples = samples.reshape(-1, samples_shape[-1])
+    #     states_scaler = MinMaxScaler()
+    #     states_scaler.fit(samples)
 
-        def scale_states_func(states):
-            # Input states is an array of shape [batch_size, episode_length, folded_state_size]
-            # reshape to [batch_size * episode_length * fold_size, state_size].
-            states_reshp = states.reshape(-1, samples_shape[-1])
-            # Scale the states.
-            scaled_states = states_scaler.transform(states_reshp)
-            # Reshape back to original shape.
-            return scaled_states.reshape(states.shape)
+    #     def scale_states_func(states):
+    #         # Convert to numpy if it is a tensor
+    #         if tf.is_tensor(states):
+    #             states = states.numpy()
+    #         # Input states is an array of shape [batch_size, episode_length, folded_state_size]
+    #         # reshape to [batch_size * episode_length * fold_size, state_size].
+    #         states_reshp = states.reshape(-1, samples_shape[-1])
+    #         # Scale the states.
+    #         scaled_states = states_scaler.transform(states_reshp)
+    #         # Reshape back to original shape.
+    #         return scaled_states.reshape(states.shape)
 
-        def descale_states_func(states):
-            # Input states is an array of shape [batch_size, episode_length, folded_state_size]
-            # reshape to [batch_size * episode_length * fold_size, state_size].
-            states_reshp = states.reshape(-1, samples_shape[-1])
-            # Scale the states.
-            descaled_states = states_scaler.inverse_transform(states_reshp)
-            # Reshape back to original shape.
-            return descaled_states.reshape(states.shape)
+    #     def descale_states_func(states):
+    #         # Convert to numpy if it is a tensor
+    #         if tf.is_tensor(states):
+    #             states = states.numpy()
+    #         # Input states is an array of shape [batch_size, episode_length, folded_state_size]
+    #         # reshape to [batch_size * episode_length * fold_size, state_size].
+    #         states_reshp = states.reshape(-1, samples_shape[-1])
+    #         # Scale the states.
+    #         descaled_states = states_scaler.inverse_transform(states_reshp)
+    #         # Reshape back to original shape.
+    #         return descaled_states.reshape(states.shape)
 
-        return states_scaler, scale_states_func, descale_states_func
-
-
-    def get_actions_scaler_descaler(self, samples):
-        '''
-        :param samples: an array of shape [num_of_samples, num_of_agents, state_size]
-        containing samples of states of the environment.
-        '''
-        samples_shape = samples.shape
-        # reshape to [num_of_samples * num_of_agents, state_size]
-        samples = samples.reshape(-1, samples_shape[-1])
-        # an array of shape [num_of_samples * num_of_agents, 1], containing the sample budgets.
-        budget_samples = samples[:,1:2]
-        actions_scaler = MinMaxScaler()
-        actions_scaler.fit(budget_samples)
-
-        def descale_actions_func(scaled_actions):
-            # scaled_actions: [batch, episode, num_subactions, subactions_size]
-            # subactions_size: [auction_item_spec_id, bid_per_item, total_limit]
-            sa_without_ais = scaled_actions[:, :, :, 1:]
-            sa_reshaped = sa_without_ais.reshape(-1, sa_without_ais.shape[-1])  # (N, 2)
-            # Apply the scaler (fit on (N,1)) to both columns by repeating the scaler's inverse_transform
-            # on each column independently, then stacking
-            bid_per_item = sa_reshaped[:, 0:1]
-            total_limit = sa_reshaped[:, 1:2]
-            bid_per_item_descaled = actions_scaler.inverse_transform(bid_per_item)
-            total_limit_descaled = actions_scaler.inverse_transform(total_limit)
-            descaled = np.concatenate([bid_per_item_descaled, total_limit_descaled], axis=1)
-            descaled_actions_without_ais = descaled.reshape(sa_without_ais.shape)
-            descaled_actions = np.concatenate((scaled_actions[:, :, :, 0:1], descaled_actions_without_ais), axis=3)
-            return descaled_actions
-
-        def scale_actions_func(descaled_actions):
-            # descaled_actions: [batch, episode, num_subactions, subactions_size]
-            da_without_ais = descaled_actions[:, :, :, 1:]
-            da_reshaped = da_without_ais.reshape(-1, da_without_ais.shape[-1])  # (N, 2)
-            bid_per_item = da_reshaped[:, 0:1]
-            total_limit = da_reshaped[:, 1:2]
-            bid_per_item_scaled = actions_scaler.transform(bid_per_item)
-            total_limit_scaled = actions_scaler.transform(total_limit)
-            scaled = np.concatenate([bid_per_item_scaled, total_limit_scaled], axis=1)
-            scaled_actions_without_ais = scaled.reshape(da_without_ais.shape)
-            scaled_actions = np.concatenate((descaled_actions[:, :, :, 0:1], scaled_actions_without_ais), axis=3)
-            return scaled_actions
-
-        return actions_scaler, scale_actions_func, descale_actions_func
+    #     return states_scaler, scale_states_func, descale_states_func
 
 
-    def get_transformed(self, env):
-        # An array of shape [num_of_samples, num_of_agents, state_size].
-        # If agents have not been set, num_of_agents defaults to 1.
-        samples = env.get_states_samples(10000)
-        _, scale_states_func, _  = self.get_states_scaler_descaler(samples)
-        actions_scaler, scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(samples)
+    # def get_actions_scaler_descaler(self, samples):
+    #     '''
+    #     :param samples: an array of shape [num_of_samples, num_of_agents, state_size]
+    #     containing samples of states of the environment.
+    #     '''
+    #     samples_shape = samples.shape
+    #     # reshape to [num_of_samples * num_of_agents, state_size]
+    #     samples = samples.reshape(-1, samples_shape[-1])
+    #     # an array of shape [num_of_samples * num_of_agents, 1], containing the sample budgets.
+    #     budget_samples = samples[:,1:2]
+    #     actions_scaler = MinMaxScaler()
+    #     actions_scaler.fit(budget_samples)
+
+    #     def descale_actions_func(scaled_actions):
+    #         # scaled_actions: [batch, episode, num_subactions, subactions_size]
+    #         # subactions_size: [auction_item_spec_id, bid_per_item, total_limit]
+    #         sa_without_ais = scaled_actions[:, :, :, 1:]
+
+    #         if tf.is_tensor(sa_without_ais):
+    #             sa_without_ais = sa_without_ais.numpy()
+
+    #         sa_reshaped = sa_without_ais.reshape(-1, sa_without_ais.shape[-1])  # (N, 2)
+
+    #         # Apply the scaler (fit on (N,1)) to both columns by repeating the scaler's inverse_transform
+    #         # on each column independently, then stacking
+    #         bid_per_item = sa_reshaped[:, 0:1]
+    #         total_limit = sa_reshaped[:, 1:2]
+    #         bid_per_item_descaled = actions_scaler.inverse_transform(bid_per_item)
+    #         total_limit_descaled = actions_scaler.inverse_transform(total_limit)
+    #         descaled = np.concatenate([bid_per_item_descaled, total_limit_descaled], axis=1)
+    #         descaled_actions_without_ais = descaled.reshape(sa_without_ais.shape)
+    #         descaled_actions = np.concatenate((scaled_actions[:, :, :, 0:1], descaled_actions_without_ais), axis=3)
+    #         return descaled_actions
+
+    #     def scale_actions_func(descaled_actions):
+    #         # descaled_actions: [batch, episode, num_subactions, subactions_size]
+    #         da_without_ais = descaled_actions[:, :, :, 1:]
+    
+    #         if tf.is_tensor(da_without_ais):
+    #             da_without_ais = da_without_ais.numpy()
+
+    #         da_reshaped = da_without_ais.reshape(-1, da_without_ais.shape[-1])  # (N, 2)
+    #         bid_per_item = da_reshaped[:, 0:1]
+    #         total_limit = da_reshaped[:, 1:2]
+    #         bid_per_item_scaled = actions_scaler.transform(bid_per_item)
+    #         total_limit_scaled = actions_scaler.transform(total_limit)
+    #         scaled = np.concatenate([bid_per_item_scaled, total_limit_scaled], axis=1)
+    #         scaled_actions_without_ais = scaled.reshape(da_without_ais.shape)
+    #         scaled_actions = np.concatenate((descaled_actions[:, :, :, 0:1], scaled_actions_without_ais), axis=3)
+    #         return scaled_actions
+
+    #     return actions_scaler, scale_actions_func, descale_actions_func
+
+
+    # def get_transformed(self, env):
+    #     # An array of shape [num_of_samples, num_of_agents, state_size].
+    #     # If agents have not been set, num_of_agents defaults to 1.
+    #     samples = env.get_states_samples(10000)
+    #     _, scale_states_func, _  = get_states_scaler_descaler_tf(samples)
+    #     actions_scaler, scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(samples)
         
-        # shape (num_of_nonzero_samples, state_size)
-        nonzero_samples = tf.boolean_mask(samples, tf.math.logical_not(tf.math.logical_and(samples[:,:,0] == 0, samples[:,:,1] == 0)))
-        avg_budget_per_reach = tf.reduce_mean(nonzero_samples[:,1] / nonzero_samples[:,0])
-        scaled_avg_bpr = actions_scaler.transform([[avg_budget_per_reach]])[0][0]
-        return scale_states_func, actions_scaler, scale_actions_func, descale_actions_func, scaled_avg_bpr
+    #     # shape (num_of_nonzero_samples, state_size)
+    #     nonzero_samples = tf.boolean_mask(samples, tf.math.logical_not(tf.math.logical_and(samples[:,:,0] == 0, samples[:,:,1] == 0)))
+    #     avg_budget_per_reach = tf.reduce_mean(nonzero_samples[:,1] / nonzero_samples[:,0])
+    #     scaled_avg_bpr = actions_scaler.transform([[avg_budget_per_reach]])[0][0]
+    #     return scale_states_func, actions_scaler, scale_actions_func, descale_actions_func, scaled_avg_bpr
 
 
-    def run(self, env, agents, num_days, num_trajs, num_epochs, horizon_cutoff, vectorize=True, debug=False):
-        num_of_days = num_days # how long the game lasts
-        num_of_trajs = num_trajs # how many times to run the game
-        NUM_EPOCHS = num_epochs # how many batches of trajs to run
-        horizon_cutoff = horizon_cutoff
-        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+    # def run(self, env, agents, num_days, num_trajs, num_epochs, horizon_cutoff, vectorize=True, debug=False):
+    #     num_of_days = num_days # how long the game lasts
+    #     num_of_trajs = num_trajs # how many times to run the game
+    #     NUM_EPOCHS = num_epochs # how many batches of trajs to run
+    #     horizon_cutoff = horizon_cutoff
+    #     print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
 
-        env.vectorize = vectorize
-        env.init(agents, num_of_days)
-        print("agent policies: {}".format([agent.policy for agent in env.agents]))
+    #     env.vectorize = vectorize
+    #     env.init(agents, num_of_days)
+    #     print("agent policies: {}".format([agent.policy for agent in env.agents]))
 
-        start = time.time()
+    #     start = time.time()
 
-        for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
-            avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
-                            np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
-            print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
+    #     # for i in range(NUM_EPOCHS):
+    #     #     train(env, num_of_trajs, horizon_cutoff, debug=debug)
+    #     #     avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
+    #     #                     np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
+    #     #     print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
 
-            if ((i+1) % 50) == 0:
-                avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
-                            np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
-                max_last_50_epochs = [(agent.name, np.max(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
-                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
-                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+    #     #     if ((i+1) % 50) == 0:
+    #     #         avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
+    #     #                     np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+    #     #         max_last_50_epochs = [(agent.name, np.max(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+    #     #         print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
+    #     #         print("Max of last 50 epochs: {}".format(max_last_50_epochs))
         
-        end = time.time()
-        print("Took {} sec to train".format(end-start))
+    #     for epoch in range(num_epochs):
+    #         summary = train_epoch(env, num_trajs, horizon_cutoff,
+    #                             scale_states_func=None,
+    #                             discount=1.0,
+    #                             debug=debug)
+
+    #         # format like your old log
+    #         formatted = [(name, mean, std) for name, (mean, std) in summary.items()]
+    #         print(f"epoch: {epoch}, avg and std rwds: {formatted}")
+
+
+    #     end = time.time()
+    #     print("Took {} sec to train".format(end-start))
 
     def exp_1(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
@@ -462,7 +696,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -487,7 +721,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -512,7 +746,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -537,7 +771,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -562,7 +796,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -587,7 +821,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -612,7 +846,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -637,7 +871,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -662,7 +896,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -687,7 +921,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -712,7 +946,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -737,7 +971,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -762,7 +996,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -788,7 +1022,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -814,7 +1048,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -840,7 +1074,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -866,7 +1100,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -923,7 +1157,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -985,7 +1219,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1047,7 +1281,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1109,7 +1343,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1171,7 +1405,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1233,7 +1467,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1295,7 +1529,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1357,7 +1591,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1419,7 +1653,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1481,7 +1715,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1543,7 +1777,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1605,7 +1839,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1667,7 +1901,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1729,7 +1963,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1791,7 +2025,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1853,7 +2087,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1915,7 +2149,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -1977,7 +2211,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -2039,7 +2273,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -2101,7 +2335,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -2163,7 +2397,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -2225,7 +2459,7 @@ class Experiment:
         env.vectorize = True
         env.init(agents, num_of_days)
 
-        scale_states_func, _  = self.get_states_scaler_descaler(env)
+        scale_states_func, _  = get_states_scaler_descaler_tf(env)
         scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(env)
         agents[0].set_scalers(scale_states_func, scale_actions_func)
         agents[0].set_descaler(descale_actions_func)
@@ -2256,7 +2490,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2276,30 +2510,61 @@ class Experiment:
         return None, None, None
 
     
-    def exp_1000(self, num_days, num_trajs, num_epochs, lr, debug=False):
-        # Get a pre-defined environment
-        env, auction_item_spec_ids = self.setup_1()
+    # def exp_1000(self, num_days, num_trajs, num_epochs, lr, debug=False):
+    #     # Get a pre-defined environment
+    #     env, auction_item_spec_ids = self.setup_1()
         
-        # Get scaling/decaling info
-        scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+    #     # Get scaling/decaling info
+    #     scale_states_func, actions_scaler, \
+    #     scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
-        # Setup the agents of the game
+    #     # Setup the agents of the game
+    #     agents = [
+    #                 Agent("agent1", 
+    #                     REINFORCE_Gaussian_v2_MarketEnv_Continuous(
+    #                         auction_item_spec_ids, learning_rate=lr, 
+    #                         budget_per_reach=scaled_avg_bpr, shape_reward=False
+    #                     ),
+    #                     scale_states_func, scale_actions_func,
+    #                     descale_actions_func
+    #                 ),
+    #                 Agent("agent2", FixedBidPolicy(5, 5))
+    #     ]
+
+    #     # Run the game
+    #     self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+    #     return None, None, None
+
+    def exp_1000(self, num_days, num_trajs, num_epochs, lr, debug=False):
+        # 1️. Setup environment
+        env, auction_item_spec_ids = self.setup_1(debug=debug)
+
+        # 2️. Get TF-native scalers and scaled avg_budget_per_reach
+        scale_states_func, scale_actions_func, descale_actions_func, scaled_avg_bpr_value = get_transformed(env, debug=debug)
+
+        # 3️. Setup agents
         agents = [
-                    Agent("agent1", 
-                        REINFORCE_Gaussian_v2_MarketEnv_Continuous(
-                            auction_item_spec_ids, learning_rate=lr, 
-                            budget_per_reach=scaled_avg_bpr, shape_reward=False
-                        ),
-                        scale_states_func, scale_actions_func,
-                        descale_actions_func
-                    ),
-                    Agent("agent2", FixedBidPolicy(5, 5))
+            Agent(
+                "agent1",
+                REINFORCE_Gaussian_v2_MarketEnv_Continuous(
+                    auction_item_spec_ids,
+                    learning_rate=lr,
+                    budget_per_reach=scaled_avg_bpr_value,
+                    shape_reward=False
+                ),
+                scale_states_func, scale_actions_func,
+                descale_actions_func, debug=debug
+            ),
+            Agent("agent2", FixedBidPolicy(5, 5), debug=debug)
         ]
 
-        # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
-        return None, None, None
+        # 4️. Run vectorized training fully TF-native
+        summary = run(
+            env, agents, num_days, num_trajs, num_epochs, horizon_cutoff=100, debug=debug,
+            # scale_states_func=scale_states_func, scale_actions_func=scale_actions_func
+        )
+        return None, None, summary
+
 
 
     def exp_1001(self, num_days, num_trajs, num_epochs, lr, debug=False):
@@ -2308,7 +2573,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2334,7 +2599,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2360,7 +2625,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2386,7 +2651,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2412,7 +2677,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2438,7 +2703,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2464,7 +2729,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2490,7 +2755,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2516,7 +2781,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2541,7 +2806,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2567,7 +2832,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2593,7 +2858,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2619,7 +2884,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2645,7 +2910,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2671,7 +2936,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2697,7 +2962,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2723,7 +2988,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2749,7 +3014,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2775,7 +3040,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2801,7 +3066,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2827,7 +3092,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2853,7 +3118,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2879,7 +3144,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2905,7 +3170,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2931,7 +3196,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2957,7 +3222,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -2983,7 +3248,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3009,7 +3274,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3035,7 +3300,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3061,7 +3326,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3087,7 +3352,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3113,7 +3378,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3139,7 +3404,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3165,7 +3430,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3191,7 +3456,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3216,7 +3481,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3242,7 +3507,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3268,7 +3533,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3294,7 +3559,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3320,7 +3585,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3346,7 +3611,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3372,7 +3637,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3398,7 +3663,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3424,7 +3689,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3450,7 +3715,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3476,7 +3741,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3502,7 +3767,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3528,7 +3793,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3554,7 +3819,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3580,7 +3845,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3606,7 +3871,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3631,7 +3896,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3657,7 +3922,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3683,7 +3948,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3709,7 +3974,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3735,7 +4000,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3761,7 +4026,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3787,7 +4052,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3813,7 +4078,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3839,7 +4104,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3865,7 +4130,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
@@ -3891,7 +4156,7 @@ class Experiment:
         
         # Get scaling/decaling info
         scale_states_func, actions_scaler, \
-        scale_actions_func, descale_actions_func, scaled_avg_bpr = self.get_transformed(env)
+        scale_actions_func, descale_actions_func, scaled_avg_bpr = get_transformed(env)
 
         # Setup the agents of the game
         agents = [
