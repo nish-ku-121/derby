@@ -1,0 +1,17 @@
+# YAML for: make docker-run ARGS="poetry run python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
+# This replicates exp_1000 with: num_days=1, num_trajs=200, num_epochs=100, lr=5e-7
+num_days: 1
+num_trajs: 200
+num_epochs: 10
+setup: setup_1
+agents:
+  - name: agent1
+    policy: REINFORCE_Gaussian_v2_MarketEnv_Continuous
+    params:
+      learning_rate: 5e-7
+      shape_reward: false
+  - name: agent2
+    policy: FixedBidPolicy
+    params:
+      bid_per_item: 5
+      total_limit: 5

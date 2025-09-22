@@ -32,8 +32,8 @@ endif
 docker-lockfile:
 	docker run --rm -v "$(PWD_PATH):/app" $(PYTHON_IMAGE) bash -c "cd /app && pip install poetry==2.1.4 && poetry lock"
 
-# Build Docker image
-docker-build:
+# Build Docker image (ensure lockfile is up to date first)
+docker-build: docker-lockfile
 	docker build -t derby-app .
 
 # Run container with live code mounting
