@@ -18,6 +18,117 @@ import tensorflow as tf
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
+def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=None,
+                          debug=False, update_policies_after_every_step=False):
+    """
+    Generate trajectories for all agents in the environment.
+    Ensures correct shapes for actions to keep bid_per_item <= total_limit.
+    """
+    if scale_states_func is None:
+        scale_states_func = lambda states: states
+
+    num_agents = len(env.agents)
+    num_subactions = env.agents[0].policy.num_subactions
+    subaction_size = 1 + env.agents[0].policy.num_dist_per_subaction  # auction_item_spec_id + bid + total_limit
+
+    # Preallocate lists for efficiency
+    all_traj_states_list = []
+    all_traj_actions_lists = [[] for _ in range(num_agents)]
+    all_traj_rewards_list = []
+
+    for traj_idx in range(num_of_trajs):
+        # Reset environment
+        all_agents_states = env.reset()
+        all_agents_states = scale_states_func(all_agents_states)
+        all_agents_states = np.array(all_agents_states, dtype=np.float32)
+
+        # Preallocate trajectory arrays
+        traj_states = np.zeros((horizon_cutoff + 1, num_agents, all_agents_states.shape[-1]), dtype=np.float32)
+        traj_states[0] = all_agents_states
+        traj_rewards = np.zeros((horizon_cutoff, num_agents), dtype=np.float32)
+        traj_actions = [np.zeros((horizon_cutoff, num_subactions, subaction_size), dtype=np.float32) 
+                        for _ in range(num_agents)]
+
+        done = False
+        t = 0
+        while not done and t < horizon_cutoff:
+            actions = []
+            for ai, agent in enumerate(env.agents):
+                agent_states = env.get_folded_states(agent, traj_states[None, :t+1])
+                act = agent.compute_action(agent_states)  # shape: [1, subaction_size]
+                act = np.array(act, dtype=np.float32)
+                actions.append(act)
+
+                # Store the full action vector (not just the first element)
+                traj_actions[ai][t, 0, :] = act[0]  # [subaction_size] -> [spec_id, bid_per_item, total_limit]
+            # Pass full actions to env.step
+            next_states, rewards, done = env.step(actions)
+            next_states = scale_states_func(next_states)
+            next_states = np.array(next_states, dtype=np.float32)
+
+            traj_states[t+1] = next_states
+            traj_rewards[t] = np.array(rewards, dtype=np.float32)
+
+            t += 1
+
+
+        # Append to epoch arrays
+        all_traj_states_list.append(traj_states[:t+1][None])  # add batch dim
+        all_traj_rewards_list.append(traj_rewards[:t][None])  # add batch dim
+        for ai in range(num_agents):
+            actions_to_append = traj_actions[ai][:t][None]  # add batch dim
+            all_traj_actions_lists[ai].append(actions_to_append)
+
+    # Concatenate once for efficiency
+    all_traj_states = np.concatenate(all_traj_states_list, axis=0)  # [num_trajs, episode_len, num_agents, state_size]
+    all_traj_rewards = np.concatenate(all_traj_rewards_list, axis=0)  # [num_trajs, episode_len, num_agents]
+    all_traj_actions = [np.concatenate(per_agent_list, axis=0) for per_agent_list in all_traj_actions_lists]
+
+    if debug:
+        traj_lengths = [len(per_agent_list[0][0]) for per_agent_list in all_traj_actions_lists]
+        print(f"DEBUG: trajectory lengths: {traj_lengths}")
+        print("DEBUG: all_traj_actions[0] shape:", all_traj_actions[0].shape)
+        print("DEBUG: all_traj_actions[0] sample:", all_traj_actions[0][0,0])
+
+    return all_traj_states, all_traj_actions, all_traj_rewards
+
+
+def train_epoch(env, num_of_trajs, horizon_cutoff, scale_states_func=None, discount=1.0, debug=False):
+    """
+    TF-native training epoch (vectorized)
+    """
+    states, actions, rewards = generate_trajectories(env, num_of_trajs, horizon_cutoff,
+                                                     scale_states_func=scale_states_func,
+                                                     debug=debug)
+    agents = env.agents
+    with tf.GradientTape() as tape:
+        per_agent_info = []
+        for agent in agents:
+            agent_states = env.get_folded_states(agent, states)
+            agent_actions = env.get_folded_actions(agent, actions)
+            agent_rewards = env.get_folded_rewards(agent, rewards)
+            loss = agent.compute_policy_loss(agent_states, agent_actions, agent_rewards)
+            per_agent_info.append((agent, agent_states, agent_actions, agent_rewards, loss))
+
+        if debug:
+            print("losses:", [info[4] for info in per_agent_info])
+
+    for agent, ag_states, ag_actions, ag_rewards, ag_loss in per_agent_info:
+        agent.update_policy(ag_states, ag_actions, ag_rewards, ag_loss, tf_grad_tape=tape)
+        agent.update_stats(ag_states, ag_actions, ag_rewards)
+
+    # Summarize rewards
+    summary = {}
+    for agent in agents:
+        if agent.cumulative_rewards is not None and len(agent.cumulative_rewards) > 0:
+            mean = float(np.mean(agent.cumulative_rewards[-num_of_trajs:]))
+            std = float(np.std(agent.cumulative_rewards[-num_of_trajs:]))
+        else:
+            mean, std = 0.0, 0.0
+        summary[agent.name] = (mean, std)
+
+    return summary
+
 
 def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, debug=False, update_policies_after_every_step=False):
     with tf.GradientTape() as tape:
@@ -47,104 +158,6 @@ def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, debug=False
     for ag, ag_states, ag_actions, ag_rewards, ag_loss in sarl_per_agent:
         ag.update_policy(ag_states, ag_actions, ag_rewards, ag_loss, tf_grad_tape=tape)
         ag.update_stats(ag_states, ag_actions, ag_rewards)
-
-def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=None, 
-                            debug=False, update_policies_after_every_step=False):
-    # A function responsible for scaling/normalizing each agent state
-    # in a list of agent states. By default, do no scaling.
-    # Input to scale_states_func will be an array of shape 
-    # [num_of_states, state_size].
-    if scale_states_func is None:
-        scale_states_func = lambda states: states
-
-    all_traj_states = None
-    all_traj_actions = None
-    all_traj_rewards = None
-    for i in range(num_of_trajs):
-        traj_i_states = None
-        traj_i_actions = None
-        traj_i_rewards = None
-        all_agents_states = env.reset()
-        all_agents_states = scale_states_func(all_agents_states)
-        # all_agents_states is array of shape [num_of_agents, state_size]
-        # so reshape to [batch_size, episode_length, num_of_agents, state_size]
-        # note that state_size would be () (i.e. OOP objects instead of vectors)
-        # if vectorize is off. the below code appropriately handles both cases 
-        # of vectorize on/off.
-        all_agents_states = np.array(all_agents_states)[None, None, :]
-        if traj_i_states is None:
-            traj_i_states = all_agents_states
-       
-        if debug:
-            print("=== Traj {} ===".format(i))
-            print()
-            print("states {}, shape {}".format(0, all_agents_states.shape))
-            print(all_agents_states)
-
-        for j in range(horizon_cutoff):
-            actions = []
-            for agent in env.agents:
-                agent_states = env.get_folded_states(agent, all_agents_states)
-                actions.append(agent.compute_action(agent_states))
-            
-            all_agents_states, rewards, done = env.step(actions)
-            all_agents_states = scale_states_func(all_agents_states)
-
-            all_agents_states = np.array(all_agents_states)[None, None, :]
-
-            # actions is array of shape [num_of_agents]
-            # since each agent can have a different number of subactions (e.g. bids),
-            # don't concat into a single tensor. Instead, concat individual tensors
-            # for each agent.
-            # so reshape to list of [batch_size, episode_length-1] tensors, one for
-            # each agent.
-            actions = [np.array(a)[None, None] for a in actions]
-
-            # rewards is array of shape [num_of_agents]
-            # so reshape to [batch_size, episode_length-1, num_of_agents]
-            rewards = np.array(rewards)[None, None, :]         
-# TODO: github issue #30
-            # if update_policies_after_every_step:
-            #     for agent in env.agents:  
-            #         states = ...
-            #         actions = ...
-            #         rewards = ...
-            #         agent.update_policy(states, actions, rewards) for agent in env.agents
-#
-            # Update trajectory
-            if env.vectorize:
-                traj_i_states = np.concatenate((traj_i_states, all_agents_states), axis=1)
-                if traj_i_rewards is None: # shortcuting check for all
-                    traj_i_actions = actions
-                    traj_i_rewards = rewards    
-                else:
-                    traj_i_actions = [ np.concatenate((traj_i_actions[i], actions[i]), axis=1) for i in range(len(actions)) ]
-                    traj_i_rewards = np.concatenate((traj_i_rewards, rewards), axis=1)
-            if debug:
-                print("actions {}".format(j))
-                print(actions)
-                print("rewards {}, shape {}".format(j, rewards.shape))
-                print(rewards)
-                print("states {}, shape {}".format(j+1, all_agents_states.shape))
-                print(all_agents_states)
-                print("Done? {}".format(done))
-            if done:
-                break 
-        if debug:
-            print()
-
-        # Update batch
-        if env.vectorize:
-            if all_traj_states is None: # shortcuting check for all
-                all_traj_states = traj_i_states
-                all_traj_actions = traj_i_actions
-                all_traj_rewards = traj_i_rewards
-            else:
-                all_traj_states = np.concatenate((all_traj_states, traj_i_states), axis=0)
-                all_traj_actions = [ np.concatenate((all_traj_actions[i], traj_i_actions[i]), axis=0) for i in range(len(traj_i_actions))]
-                all_traj_rewards = np.concatenate((all_traj_rewards, traj_i_rewards), axis=0)
-
-    return all_traj_states, all_traj_actions, all_traj_rewards
 
 
 class AbstractEnvironment(ABC):
@@ -341,40 +354,31 @@ class MarketEnv(AbstractEnvironment):
                 bidder = agents[i]
                 auction_item_spec_id = bid_j_of_agent_i[0]
                 auction_item_spec = auction_item_specs_by_id[auction_item_spec_id]
+                if self.debug:
+                    print("DEBUG: actions_to_convert:", bid_j_of_agent_i)
+                    print("DEBUG shape:", tf.shape(bid_j_of_agent_i))
+                    print(f"DEBUG bid vector for agent {bidder.uid}, auction_item_spec {auction_item_spec.uid}: {bid_j_of_agent_i}")
+                    print("DEBUG bid_per_item:", bid_j_of_agent_i[1])
+                    print("DEBUG total_limit:", bid_j_of_agent_i[2])
                 bid_obj = Bid.from_vector(bid_j_of_agent_i, bidder, auction_item_spec)
                 agent_i_bids.append(bid_obj)
             bids.append(agent_i_bids)
         return bids
 
-    def convert_to_states_tensor(self, states: Iterable[State]):
-        '''
-        Assuming states is of the form:
-        [
-            state 1,
-            ...,
-            state n,
-            
-        ]
-        (The canonical use of this func is for n = m, where m is 
-         the # of agents)
-        '''
+    def convert_to_states_tensor(self, states):
+        """
+        Convert list of State objects to numpy array float32.
+        """
         if not self.vectorize:
             return states
-        states_tensor = []
-        for state in states:
-            vec = state.to_vector()
-            states_tensor.append(vec)
-        # numpy array of shape [n, s]
-        # where:
-        #   n = # of states
-        #   s = # of fields of a state vector
-        return np.array(states_tensor)
+        states_tensor = np.array([s.to_vector() for s in states], dtype=np.float32)
+        return states_tensor
 
 
 class OneCampaignNDaysEnv(MarketEnv):
 
     def __init__(self, auction: AbstractAuction, auction_item_spec_pmf: PMF, campaign_pmf: PMF,
-                 num_items_per_timestep_min: int, num_items_per_timestep_max: int, vectorize=True):
+                 num_items_per_timestep_min: int, num_items_per_timestep_max: int, vectorize=True, debug=False):
         super().__init__(vectorize)
         self._auction = auction
         self._campaign_pmf = campaign_pmf
@@ -382,6 +386,7 @@ class OneCampaignNDaysEnv(MarketEnv):
         self._num_items_per_timestep_range = (num_items_per_timestep_min, num_items_per_timestep_max)
         self._auction_item_spec_pmf = auction_item_spec_pmf
         self._auction_item_specs_by_id = { spec.uid : spec for spec in self._auction_item_spec_pmf.items() }
+        self.debug = debug
 
     def init(self, agents, horizon=1):
         super().init(agents, horizon=horizon)
@@ -408,6 +413,10 @@ class OneCampaignNDaysEnv(MarketEnv):
         '''
         states = []
         rewards = []
+        if self.debug:
+            for ai, act in enumerate(actions):
+                print(f"DEBUG step input action for agent {ai}:", act)
+                print("DEBUG shape:", act.shape)
         
         if not self.done:
             # Convert actions to a 2D list of bid objects, where bids[i] is agent i's 

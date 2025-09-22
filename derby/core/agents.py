@@ -30,12 +30,13 @@ class Agent:
     # Likewise, function to scale/normalize descaled actions.
     actions_scaler: Callable
 
-    def __init__(self, name: str, policy: AbstractPolicy, states_scaler=None, actions_scaler=None, actions_descaler=None):
+    def __init__(self, name: str, policy: AbstractPolicy, states_scaler=None, actions_scaler=None, actions_descaler=None, debug=False):
         self.uid = next(type(self)._uid_generator)
         self.name = name
         self.policy = policy
         self.agent_num = None
         self.cumulative_rewards = None
+        self.debug = debug
 
         if states_scaler is None:
             self.states_scaler = lambda states : states
@@ -81,11 +82,31 @@ class Agent:
         '''
         action = None
         states = self.convert_to_tf_tensor_if_needed(self.states_scaler(states))
-        scaled_actions = self.policy.choose_actions(self.policy.call(states))
+        if self.debug:
+            print(f"DEBUG Agent.compute_action: incoming states shape={getattr(states, 'shape', None)}")
+        
+        policy_call_out = self.policy.call(states)
+        if self.debug:
+            print(f"DEBUG Agent.compute_action: policy.call output type={type(policy_call_out)} shape={getattr(policy_call_out, 'shape', None)}")
+        
+        scaled_actions = self.policy.choose_actions(policy_call_out)
+        if self.debug:
+            print(f"DEBUG Agent.compute_action: choose_actions output type={type(scaled_actions)} shape={getattr(scaled_actions, 'shape', None)}")
+            if hasattr(scaled_actions, '__array__'):
+                # show first subaction vector if possible
+                try:
+                    print("DEBUG Agent.compute_action: choose_actions sample[0,0,0]=", scaled_actions[0,0,0])
+                except Exception:
+                    pass
+        
         if tf.is_tensor(scaled_actions):
-            scaled_actions = scaled_actions.numpy()
+            scaled_actions_np = scaled_actions.numpy()
+        else:
+            scaled_actions_np = scaled_actions
+        
+        descaled = self.actions_descaler(scaled_actions_np)
         # Descale/de-normalize the action before returning (i.e. passing to the environment).
-        action = self.actions_descaler(scaled_actions)[0,0]
+        action = descaled[0,0]
         return action
 
     def compute_policy_loss(self, states, actions, rewards):
@@ -99,7 +120,11 @@ class Agent:
         :return: The agent's policy's loss.
         '''
         states = self.convert_to_tf_tensor_if_needed(self.states_scaler(states))
-        actions = self.convert_to_tf_tensor_if_needed(self.actions_scaler(actions))
+        # NOTE: Actions are already in physical space (bid, total_limit). We avoid
+        # passing them through actions_scaler here because the current action
+        # scaler operates in latent (bid, multiplier) space for invariant safety.
+        # The policy's policy_loss expects physical actions.
+        actions = self.convert_to_tf_tensor_if_needed(actions)
         rewards = self.convert_to_tf_tensor_if_needed(rewards)
         return self.policy.policy_loss(states, actions, rewards)
 
@@ -115,7 +140,8 @@ class Agent:
         :return:
         '''
         states = self.convert_to_tf_tensor_if_needed(self.states_scaler(states))
-        actions = self.convert_to_tf_tensor_if_needed(self.actions_scaler(actions))
+        # See note in compute_policy_loss: do not scale actions before updating.
+        actions = self.convert_to_tf_tensor_if_needed(actions)
         rewards = self.convert_to_tf_tensor_if_needed(rewards)
 
         self.policy.update(states, actions, rewards, policy_loss, tf_grad_tape=tf_grad_tape)
