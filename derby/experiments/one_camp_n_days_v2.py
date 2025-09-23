@@ -136,11 +136,13 @@ def _run_simple_config(config: Dict[str, Any], output_dir_override: str | None =
     num_of_trajs = num_trajs
     NUM_EPOCHS = num_epochs
     horizon_cutoff = 100
-    print(f"days per traj: {num_of_days}, trajs per epoch: {num_of_trajs}, EPOCHS: {NUM_EPOCHS}")
+    if debug:
+        print(f"days per traj: {num_of_days}, trajs per epoch: {num_of_trajs}, EPOCHS: {NUM_EPOCHS}")
 
     env.vectorize = True
     env.init(agents, num_of_days)
-    print("agent policies: {}".format([agent.policy for agent in env.agents]))
+    if debug:
+        print("agent policies: {}".format([agent.policy for agent in env.agents]))
 
     run_id = str(uuid.uuid4())
     config_hash = _compute_config_hash(config)
@@ -158,7 +160,8 @@ def _run_simple_config(config: Dict[str, Any], output_dir_override: str | None =
             # Use numpy via pandas for std to avoid an extra import
             std_r = float(pd.Series(last).std(ddof=0)) if len(last) > 0 else float("nan")
             avg_and_std_rwds.append((agent.name, mean_r, std_r))
-        print(f"epoch: {i}, avg and std rwds: {avg_and_std_rwds}")
+        if debug:
+            print(f"epoch: {i}, avg and std rwds: {avg_and_std_rwds}")
 
         # Append logs
         if output_dir:
@@ -189,11 +192,13 @@ def _run_simple_config(config: Dict[str, Any], output_dir_override: str | None =
                 std_r = float(pd.Series(last50).std(ddof=0)) if len(last50) > 0 else float("nan")
                 avg_and_std_rwds_last_50_epochs.append((agent.name, mean_r, std_r))
             max_last_50_epochs = [(agent.name, float(max(agent.cumulative_rewards[-50 * num_of_trajs:]))) for agent in env.agents]
-            print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
-            print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+            if debug:
+                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
+                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
 
     end = time.time()
-    print("Took {} sec to train".format(end - start))
+    if debug:
+        print("Took {} sec to train".format(end - start))
 
     # Write parquet if enabled
     if output_dir and rows:

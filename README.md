@@ -49,16 +49,56 @@ This project is designed to run using Docker. You only need Docker installed—n
 
 ## Running Experiments
 
-To run an experiment (for example, the `one_camp_n_days` experiment), use:
+The Makefile's `docker-run` target automatically executes commands via Poetry inside the container, so you can pass plain `python` commands in `ARGS`.
+
+To run an experiment (for example, the legacy `one_camp_n_days` module), use:
 ```bash
-make docker-run ARGS="poetry run python -u -m derby.experiments.one_camp_n_days <experiment_name> <num_days> <num_trajs> <num_epochs> <learning_rate>"
+make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days <experiment_name> <num_days> <num_trajs> <num_epochs> <learning_rate>"
 ```
 Replace the arguments as needed for your experiment.
 
 e.g.
 ```bash
-make docker-run ARGS="poetry run python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
+make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
 ```
+
+---
+
+## Parallel sweeps (recommended)
+
+Use the process-based sweeper to run many configurations in parallel and collect results:
+
+```bash
+make docker-run ARGS='python -u results/parallel_sweep.py \
+    --base-yaml configs/base_sweep.yaml \
+    --grid-yaml configs/grid_sweep.yaml \
+    --parquet-dir results/parquet \
+    --label-prefix myrun \
+    --tf-intra 1 --tf-inter 1'
+```
+
+Key ideas:
+- Base config (`configs/base_sweep.yaml`): a single config dict accepted by the simplified runner.
+- Grid config (`configs/grid_sweep.yaml`): a mapping of dotted-keys to lists, expanded into the Cartesian product. Example keys: `num_epochs`, `agents.0.params.learning_rate`.
+- One process per config variant (default workers = all CPU cores). TensorFlow and BLAS threads per process can be controlled with `--tf-intra` and `--tf-inter`.
+
+Useful flags:
+- `--base-yaml`, `--grid-yaml`: YAML files for the base config and parameter grid.
+- `--parquet-dir`: where per-epoch aggregate Parquet files are written (default `results/parquet`).
+- `--results-jsonl`: append-only JSONL summary with status and per-run duration (default `results/sweep/parallel_results.jsonl`).
+- `--label-prefix`: prefix for per-run labels; actual labels are suffixed with `-i<index>`.
+- `--max-workers`: cap number of worker processes (default = all CPUs).
+- `--tf-intra`, `--tf-inter`: TensorFlow intra/inter-op thread counts per process (defaults 1/1 to avoid oversubscription).
+- `--debug`: force verbose training logs for all runs (overrides YAML `debug`, which is false by default).
+
+Behavior and logs:
+- The sweeper prints a concise line when each run starts, including label, policy, learning rate, epochs, and trajs.
+- Per-epoch training prints are hidden by default to reduce overhead. Set `--debug` (or `debug: true` in YAML) to show them.
+- At the end, the sweeper reports wall time, aggregate CPU time, speedup, and parallel efficiency.
+
+Outputs:
+- Parquet files per run: `results/parquet/epoch_agg__<uuid>.parquet` (ignored by git).
+- JSONL summary: `results/sweep/parallel_results.jsonl`.
 
 ## Rebuilding the Poetry Lock File
 
