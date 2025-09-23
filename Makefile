@@ -46,7 +46,7 @@ docker-shell: docker-build
 
 # Generalized Docker run target
 docker-run:
-	docker run --rm -v "$(PWD_PATH):/app" derby-app $(ARGS)
+	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run $(ARGS)"
 
 # Run Jupyter Lab inside Docker with Poetry env (mounts repo and exposes port)
 docker-jupyter: docker-build
