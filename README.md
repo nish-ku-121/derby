@@ -75,10 +75,11 @@ make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days exp_1000 1 
 Use the process-based sweeper to run many configurations in parallel and collect results:
 
 ```bash
-make docker-run ARGS='python -u results/parallel_sweep.py \
+make docker-run ARGS='python -u pipeline/parallel_sweep.py \
     --base-yaml configs/base_sweep.yaml \
-    --grid-yaml configs/grid_sweep.yaml \
+    --grid-yaml configs/grid_sweep_1.yaml \
     --parquet-dir results/parquet \
+    --results-jsonl results/sweep/parallel_results.jsonl \
     --label-prefix myrun \
     --tf-intra 1 --tf-inter 1'
 ```
@@ -105,6 +106,26 @@ Behavior and logs:
 Outputs:
 - Parquet files per run: `results/parquet/epoch_agg__<uuid>.parquet` (ignored by git).
 - JSONL summary: `results/sweep/parallel_results.jsonl`.
+
+---
+
+## Repository layout (updated)
+
+- `pipeline/` — modern, process-based runners and tools
+    - `parallel_sweep.py` — main entrypoint for running config sweeps in parallel (writes Parquet + JSONL outputs)
+- `analysis/` — data loading and lightweight summarization helpers
+    - `epoch_agg_loader.py` — utilities to list/load parquet files and produce basic policy summaries
+- `legacy/` — original CSV-based helpers and plotting for older experiments
+    - `plot_results.py`, `logs_to_csvs`, `csvs_to_plots`, `logs_to_plots`, `log_to_csv`
+- `results/` — outputs only
+    - `parquet/` — per-run epoch aggregate Parquet files
+    - `sweep/` — aggregated sweep artifacts (e.g., `parallel_results.jsonl`)
+- `configs/` — experiment/sweep YAML configuration (e.g., `base_sweep.yaml`, `grid_sweep_1.yaml`)
+- `notebooks/` — Jupyter notebooks for exploration/visualization
+
+Notes:
+- The previous Python shims under `results/` were removed to make `results/` outputs-only.
+- Update any local scripts to import from `analysis.*` or execute from `pipeline/*` instead of `results.*`.
 
 ## Rebuilding the Poetry Lock File
 
