@@ -23,8 +23,8 @@ WORKDIR /app
 # Copy only pyproject.toml and poetry.lock first for caching
 COPY pyproject.toml poetry.lock* ./
 
-# Install dependencies (no dev by default)
-RUN poetry install --no-root --no-interaction --no-ansi
+# Install dependencies
+RUN poetry install --no-root --no-interaction --no-ansi --with dev
 
 # Copy the rest of the code
 COPY . .
