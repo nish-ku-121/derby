@@ -139,3 +139,8 @@ cython_debug/
 
 # Ignore work logs and temp files
 .work_logs/
+
+# Experiment outputs and analysis artifacts
+# Note: Already tracked files under these directories will remain tracked.
+results/parquet/
+.results/
