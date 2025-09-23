@@ -22,6 +22,12 @@ for i in range(num_of_trajs):
 
 ---
 
+## Documentation quick links
+
+- Policies overview: see docs/Policies.md for a grouped rundown of all policies in `derby/core/policies.py`.
+
+---
+
 ## Game Description
 
 A *market* can be thought of as a stateful, repeated auction:
