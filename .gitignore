@@ -142,6 +142,4 @@ cython_debug/
 
 # Experiment outputs and analysis artifacts
 # Note: Already tracked files under these directories will remain tracked.
-results/parquet/
-results/sweep/
-.results/
+results/
