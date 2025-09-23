@@ -14,7 +14,7 @@ Usage examples:
         --label-prefix sweep-par \
         --tf-intra 1 --tf-inter 1
 
-    # With custom base/grid YAML files
+    # With base/grid YAML files (required)
     python -u results/parallel_sweep.py \
         --base-yaml configs/base_sweep.yaml \
         --grid-yaml configs/grid_sweep.yaml \
@@ -23,6 +23,8 @@ Usage examples:
 Config file formats (YAML only):
 - base: a single config dict that _run_simple_config accepts.
 - grid: mapping of dotted-keys to lists, e.g. {num_epochs: [5,10], agents.0.params.learning_rate: [1e-3,5e-4]}.
+
+Both --base-yaml and --grid-yaml are required; no internal defaults are used.
 """
 from __future__ import annotations
 
@@ -34,7 +36,7 @@ import time
 import itertools
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # -------- Utilities (no external deps) --------
@@ -75,44 +77,6 @@ def apply_overrides(base_cfg: Dict[str, Any], override: Dict[str, Any]) -> Dict[
         set_by_dotted_key(cfg, k, v)
     return cfg
 
-# -------- Defaults (safe, small) --------
-
-def default_base_cfg() -> Dict[str, Any]:
-    return {
-        "label": "sweep-demo",
-        "setup": "setup_1",
-        "num_days": 1,
-        "num_trajs": 50,
-        "num_epochs": 5,
-        "debug": False,
-        "agents": [
-            {
-                "name": "agent1",
-                "policy": "REINFORCE_Gaussian_v2_MarketEnv_Continuous",
-                "params": {
-                    "learning_rate": 1e-3,
-                    "shape_reward": False,
-                },
-            },
-            {
-                "name": "agent2",
-                "policy": "FixedBidPolicy",
-                "params": {
-                    "bid_per_item": 5,
-                    "total_limit": 5,
-                },
-            },
-        ],
-    }
-
-def default_param_grid() -> Dict[str, List[Any]]:
-    return {
-        "num_epochs": [5, 10],
-        "num_trajs": [50],
-        "agents.0.params.learning_rate": [1e-3, 5e-4],
-        "agents.0.params.shape_reward": [False, True],
-    }
-
 # -------- Worker (import TF in child after setting env) --------
 
 def _worker_run(i: int, cfg: Dict[str, Any], parquet_dir: str, label_prefix: str,
@@ -148,6 +112,16 @@ def _worker_run(i: int, cfg: Dict[str, Any], parquet_dir: str, label_prefix: str
     cfg["seed"] = run_seed
     cfg["created_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
+    # Emit a concise start message now that the worker is actually beginning execution
+    try:
+        policy0 = cfg.get("agents", [{}])[0].get("policy")
+        lr0 = cfg.get("agents", [{}])[0].get("params", {}).get("learning_rate")
+        ne = cfg.get("num_epochs")
+        nt = cfg.get("num_trajs")
+        print(f"[run {i}] starting label={cfg['label']} policy={policy0} lr={lr0} epochs={ne} trajs={nt}")
+    except Exception:
+        print(f"[run {i}] starting label={cfg['label']}")
+
     # Seed RNGs (TensorFlow seeding handled inside policies/train paths if needed)
     random.seed(run_seed)
     np.random.seed(run_seed)
@@ -181,8 +155,8 @@ def _load_yaml_mapping(path: Path) -> Dict[str, Any]:
 def main(argv: List[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Parallel sweep runner for Derby experiments")
     # YAML config flags
-    ap.add_argument("--base-yaml", type=str, default=None, help="Path to base config YAML file (.yaml/.yml)")
-    ap.add_argument("--grid-yaml", type=str, default=None, help="Path to param grid YAML file (.yaml/.yml)")
+    ap.add_argument("--base-yaml", type=str, required=True, help="Path to base config YAML file (.yaml/.yml)")
+    ap.add_argument("--grid-yaml", type=str, required=True, help="Path to param grid YAML file (.yaml/.yml)")
     ap.add_argument("--parquet-dir", type=str, default="results/parquet", help="Output dir for Parquet logs")
     ap.add_argument("--label-prefix", type=str, default="sweep-par", help="Prefix for per-run labels")
     ap.add_argument("--base-seed", type=int, default=1337, help="Base seed for deterministic per-run seeds")
@@ -195,18 +169,16 @@ def main(argv: List[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     # Load configs
-    base_cfg: Dict[str, Any]
-    if args.base_yaml and Path(args.base_yaml).exists():
-        base_cfg = _load_yaml_mapping(Path(args.base_yaml))
-    else:
-        base_cfg = default_base_cfg()
+    # Require base YAML
+    if not args.base_yaml or not Path(args.base_yaml).exists():
+        raise FileNotFoundError(f"--base-yaml file not found: {args.base_yaml}")
+    base_cfg: Dict[str, Any] = _load_yaml_mapping(Path(args.base_yaml))
 
-    param_grid: Dict[str, List[Any]]
-    if args.grid_yaml and Path(args.grid_yaml).exists():
-        loaded = _load_yaml_mapping(Path(args.grid_yaml))
-        param_grid = {str(k): v for k, v in loaded.items()}
-    else:
-        param_grid = default_param_grid()
+    # Require grid YAML
+    if not args.grid_yaml or not Path(args.grid_yaml).exists():
+        raise FileNotFoundError(f"--grid-yaml file not found: {args.grid_yaml}")
+    loaded = _load_yaml_mapping(Path(args.grid_yaml))
+    param_grid: Dict[str, List[Any]] = {str(k): v for k, v in loaded.items()}
 
     variants = expand_grid(param_grid)
     configs = [apply_overrides(base_cfg, ov) for ov in variants]
@@ -229,15 +201,6 @@ def main(argv: List[str] | None = None) -> int:
     with ProcessPoolExecutor(max_workers=args.max_workers) as ex:
         futures = {}
         for i, cfg in enumerate(configs):
-            # Emit a concise start message for visibility
-            try:
-                policy0 = cfg.get("agents", [{}])[0].get("policy")
-                lr0 = cfg.get("agents", [{}])[0].get("params", {}).get("learning_rate")
-                ne = cfg.get("num_epochs")
-                nt = cfg.get("num_trajs")
-                print(f"[run {i}] starting label={args.label_prefix}-i{i} policy={policy0} lr={lr0} epochs={ne} trajs={nt}")
-            except Exception:
-                print(f"[run {i}] starting label={args.label_prefix}-i{i}")
             fut = ex.submit(_worker_run, i, cfg, parquet_dir, args.label_prefix, args.base_seed, args.tf_intra, args.tf_inter)
             futures[fut] = i
         for fut in as_completed(futures):
