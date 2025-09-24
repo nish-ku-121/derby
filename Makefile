@@ -5,6 +5,9 @@
 # Default Python image (should match Dockerfile)
 PYTHON_IMAGE ?= python:3.10-slim
 
+# Host port to expose Jupyter on (container still listens on 8888)
+JUPYTER_PORT ?= 8888
+
 # Detect platform
 UNAME_S := $(shell uname -s)
 
@@ -51,7 +54,7 @@ docker-run:
 # Run Jupyter Lab inside Docker with Poetry env (mounts repo and exposes port)
 docker-jupyter: docker-build
 	docker run --rm -it \
-		-p 8888:8888 \
+		-p $(JUPYTER_PORT):8888 \
 		-v "$(PWD_PATH):/app" \
 		derby-app bash -lc "cd /app && \
 		poetry run python -m ipykernel install --user --name derby-poetry --display-name 'Python (derby)' || true && \
