@@ -111,21 +111,22 @@ Outputs:
 
 ## Repository layout (updated)
 
+- `derby/` — core library (environments, agents, auctions, markets, policies, utils)
 - `pipeline/` — modern, process-based runners and tools
     - `parallel_sweep.py` — main entrypoint for running config sweeps in parallel (writes Parquet + JSONL outputs)
-- `analysis/` — data loading and lightweight summarization helpers
-    - `epoch_agg_loader.py` — utilities to list/load parquet files and produce basic policy summaries
+- `utils/` — reusable helpers for analysis and plotting
+    - `epoch_agg_loader.py` — list/load per-epoch Parquet files; basic policy summaries
+    - `plot_utils.py` — load/filter/extract_fields/plot helpers for notebooks
 - `legacy/` — original CSV-based helpers and plotting for older experiments
     - `plot_results.py`, `logs_to_csvs`, `csvs_to_plots`, `logs_to_plots`, `log_to_csv`
-- `results/` — outputs only
-    - `parquet/` — per-run epoch aggregate Parquet files
-    - `sweep/` — aggregated sweep artifacts (e.g., `parallel_results.jsonl`)
 - `configs/` — experiment/sweep YAML configuration (e.g., `base_sweep.yaml`, `grid_sweep_1.yaml`)
 - `notebooks/` — Jupyter notebooks for exploration/visualization
+- `scripts/` — convenience scripts (e.g., running grid sweeps)
+- `Dockerfile`, `Makefile`, `pyproject.toml`, `poetry.lock`
 
 Notes:
-- The previous Python shims under `results/` were removed to make `results/` outputs-only.
-- Update any local scripts to import from `analysis.*` or execute from `pipeline/*` instead of `results.*`.
+- The repository does not track `results/` in git; it's reserved for run outputs (Parquet, JSONL, etc.).
+- Update any local scripts to import from `utils.*` or execute from `pipeline/*` instead of `results.*`.
 
 ## Rebuilding the Poetry Lock File
 
