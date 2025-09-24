@@ -339,8 +339,31 @@ class MarketEnv(AbstractEnvironment):
             for j in range(len(actions[i])):
                 bid_j_of_agent_i = actions[i][j]
                 bidder = agents[i]
-                auction_item_spec_id = bid_j_of_agent_i[0]
-                auction_item_spec = auction_item_specs_by_id[auction_item_spec_id]
+                # The first column is auction_item_spec_id; ensure it's an int key
+                # because some policies produce float/NumPy scalar IDs (e.g., 1.0),
+                # which can miss int keys in dict lookups due to hashing differences.
+                try:
+                    auction_item_spec_id = int(bid_j_of_agent_i[0])
+                except Exception:
+                    # Fallback: attempt to extract Python scalar first, then cast
+                    try:
+                        auction_item_spec_id = int(float(bid_j_of_agent_i[0]))
+                    except Exception:
+                        raise KeyError(f"Invalid auction_item_spec_id type: {type(bid_j_of_agent_i[0])} value={bid_j_of_agent_i[0]}")
+
+                try:
+                    auction_item_spec = auction_item_specs_by_id[auction_item_spec_id]
+                except KeyError as e:
+                    # Fallback: align by subaction index if ID is unknown.
+                    # Many policies emit subactions in the same sorted order as auction_item_spec_ids.
+                    # If the provided ID isn't recognized (e.g., due to cross-run UID drift),
+                    # map j-th subaction to the j-th available spec ID deterministically.
+                    available = sorted(list(auction_item_specs_by_id.keys()))
+                    if 0 <= j < len(available):
+                        fallback_id = available[j]
+                        auction_item_spec = auction_item_specs_by_id[fallback_id]
+                    else:
+                        raise KeyError(f"Unknown auction_item_spec_id {auction_item_spec_id}; available IDs: {available}") from e
                 bid_obj = Bid.from_vector(bid_j_of_agent_i, bidder, auction_item_spec)
                 agent_i_bids.append(bid_obj)
             bids.append(agent_i_bids)

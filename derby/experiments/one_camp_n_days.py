@@ -22,6 +22,18 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 class Experiment:
 
     def __init__(self):
+        # Reset class-level UID generators so that spec and campaign IDs are predictable
+        # within each experiment run. This avoids cross-run drift when multiple processes
+        # or repeated runs occur in the same Python interpreter.
+        try:
+            import itertools
+            from derby.core.basic_structures import AuctionItemSpecification
+            from derby.core.ad_structures import Campaign
+            AuctionItemSpecification._uid_generator = itertools.count(1)
+            Campaign._uid_generator = itertools.count(1)
+        except Exception:
+            # Best-effort; if modules are not yet imported, continue.
+            pass
         self.auction_item_specs = [
                         AuctionItemSpecification(name="male", item_type={"male"}),
                         AuctionItemSpecification(name="female", item_type={"female"})
@@ -176,10 +188,25 @@ class Experiment:
         _, scale_states_func, _  = self.get_states_scaler_descaler(samples)
         actions_scaler, scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(samples)
         
-        # shape (num_of_nonzero_samples, state_size)
-        nonzero_samples = tf.boolean_mask(samples, tf.math.logical_not(tf.math.logical_and(samples[:,:,0] == 0, samples[:,:,1] == 0)))
-        avg_budget_per_reach = tf.reduce_mean(nonzero_samples[:,1] / nonzero_samples[:,0])
-        scaled_avg_bpr = actions_scaler.transform([[avg_budget_per_reach]])[0][0]
+        # shape (num_of_valid_samples, state_size)
+        # Use only samples with reach > 0 to avoid division-by-zero (inf) and NaNs.
+        reach = samples[:, :, 0]
+        valid_mask = reach > 0
+        valid_samples = tf.boolean_mask(samples, valid_mask)
+
+        def _mean_bpr():
+            return tf.reduce_mean(valid_samples[:, 1] / valid_samples[:, 0])
+
+        def _fallback_bpr():
+            # Sensible default if no valid samples exist
+            return tf.constant(1.0, dtype=samples.dtype)
+
+        num_valid = tf.reduce_sum(tf.cast(valid_mask, tf.int32))
+        avg_budget_per_reach = tf.cond(num_valid > 0, _mean_bpr, _fallback_bpr)
+
+        # MinMaxScaler expects a numeric Python/NumPy value
+        avg_bpr_float = float(avg_budget_per_reach.numpy())
+        scaled_avg_bpr = actions_scaler.transform([[avg_bpr_float]])[0][0]
         return scale_states_func, actions_scaler, scale_actions_func, descale_actions_func, scaled_avg_bpr
 
 
