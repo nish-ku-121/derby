@@ -78,8 +78,7 @@ Use the process-based sweeper to run many configurations in parallel and collect
 make docker-run ARGS='python -u pipeline/parallel_sweep.py \
     --base-yaml configs/base_sweep.yaml \
     --grid-yaml configs/grid_sweep_1.yaml \
-    --parquet-dir results/parquet \
-    --results-jsonl results/sweep/parallel_results.jsonl \
+    --output-dir results/sweep \
     --label-prefix myrun \
     --tf-intra 1 --tf-inter 1'
 ```
@@ -91,8 +90,7 @@ Key ideas:
 
 Useful flags:
 - `--base-yaml`, `--grid-yaml`: YAML files for the base config and parameter grid.
-- `--parquet-dir`: where per-epoch aggregate Parquet files are written (default `results/parquet`).
-- `--results-jsonl`: append-only JSONL summary with status and per-run duration (default `results/sweep/parallel_results.jsonl`).
+- `--output-dir`: base directory for outputs. Parquet files are written to `<output-dir>/parquet`, and a results JSONL is written to `<output-dir>` with both a stable filename `parallel_results.jsonl` and a timestamped file `parallel_results_YYYYMMDD-HHMMSS.jsonl` (default `results`).
 - `--label-prefix`: prefix for per-run labels; actual labels are suffixed with `-i<index>`.
 - `--max-workers`: cap number of worker processes (default = all CPUs).
 - `--tf-intra`, `--tf-inter`: TensorFlow intra/inter-op thread counts per process (defaults 1/1 to avoid oversubscription).
@@ -104,8 +102,8 @@ Behavior and logs:
 - At the end, the sweeper reports wall time, aggregate CPU time, speedup, and parallel efficiency.
 
 Outputs:
-- Parquet files per run: `results/parquet/epoch_agg__<uuid>.parquet` (ignored by git).
-- JSONL summary: `results/sweep/parallel_results.jsonl`.
+- Parquet files per run: `<output-dir>/parquet/epoch_agg__<uuid>.parquet` (ignored by git).
+- JSONL summary: `<output-dir>/parallel_results.jsonl` plus a timestamped copy `parallel_results_YYYYMMDD-HHMMSS.jsonl`.
 
 ---
 
@@ -113,7 +111,7 @@ Outputs:
 
 - `derby/` — core library (environments, agents, auctions, markets, policies, utils)
 - `pipeline/` — modern, process-based runners and tools
-    - `parallel_sweep.py` — main entrypoint for running config sweeps in parallel (writes Parquet + JSONL outputs)
+    - `parallel_sweep.py` — main entrypoint for running config sweeps in parallel (writes Parquet + JSONL outputs under a single output directory)
 - `utils/` — reusable helpers for analysis and plotting
     - `epoch_agg_loader.py` — list/load per-epoch Parquet files; basic policy summaries
     - `plot_utils.py` — load/filter/extract_fields/plot helpers for notebooks

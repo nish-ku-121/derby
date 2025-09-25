@@ -42,7 +42,11 @@ def _compute_config_hash(config: Dict[str, Any]) -> str:
     return hashlib.sha256(cfg_str.encode("utf-8")).hexdigest()
 
 
-def _run_simple_config(config: Dict[str, Any], output_dir_override: str | None = None) -> None:
+def _run_simple_config(
+    config: Dict[str, Any],
+    output_dir_override: str | None = None,
+    run_id: str | None = None,
+) -> str:
     """
         Simplified YAML schema runner.
                 Schema (simplified only):
@@ -144,73 +148,74 @@ def _run_simple_config(config: Dict[str, Any], output_dir_override: str | None =
     if debug:
         print("agent policies: {}".format([agent.policy for agent in env.agents]))
 
-    run_id = str(uuid.uuid4())
+    # Determine run identifier (allow caller to fix it, so failures can still be correlated)
+    run_id = run_id or str(uuid.uuid4())
     config_hash = _compute_config_hash(config)
     rows: List[Dict[str, Any]] = []
 
     start = time.time()
-
-    for i in range(NUM_EPOCHS):
-        train(env, num_of_trajs, horizon_cutoff, debug=debug)
-        # Compute per-agent epoch aggregates
-        avg_and_std_rwds = []
-        for agent in env.agents:
-            last = agent.cumulative_rewards[-num_of_trajs:]
-            mean_r = float(sum(last) / len(last)) if len(last) > 0 else float("nan")
-            # Use numpy via pandas for std to avoid an extra import
-            std_r = float(pd.Series(last).std(ddof=0)) if len(last) > 0 else float("nan")
-            avg_and_std_rwds.append((agent.name, mean_r, std_r))
-        if debug:
-            print(f"epoch: {i}, avg and std rwds: {avg_and_std_rwds}")
-
-        # Append logs
-        if output_dir:
-            for ainfo, stats in zip(agent_meta, avg_and_std_rwds):
-                row = {
-                    "run_id": run_id,
-                    "config_hash": config_hash,
-                    "label": label,
-                    "setup": setup_name,
-                    "num_days": num_of_days,
-                    "num_trajs": num_of_trajs,
-                    "num_epochs": NUM_EPOCHS,
-                    "epoch": i,
-                    "agent_name": stats[0],
-                    "policy_class": ainfo["policy_class"],
-                    "policy_params_json": json.dumps(ainfo["policy_params"], sort_keys=True),
-                    "mean_reward": stats[1],
-                    "std_reward": stats[2],
-                    "n_trajs": num_of_trajs,
-                }
-                rows.append(row)
-
-        if ((i + 1) % 50) == 0:
-            avg_and_std_rwds_last_50_epochs = []
+    try:
+        for i in range(NUM_EPOCHS):
+            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            # Compute per-agent epoch aggregates
+            avg_and_std_rwds = []
             for agent in env.agents:
-                last50 = agent.cumulative_rewards[-50 * num_of_trajs:]
-                mean_r = float(sum(last50) / len(last50)) if len(last50) > 0 else float("nan")
-                std_r = float(pd.Series(last50).std(ddof=0)) if len(last50) > 0 else float("nan")
-                avg_and_std_rwds_last_50_epochs.append((agent.name, mean_r, std_r))
-            max_last_50_epochs = [(agent.name, float(max(agent.cumulative_rewards[-50 * num_of_trajs:]))) for agent in env.agents]
+                last = agent.cumulative_rewards[-num_of_trajs:]
+                mean_r = float(sum(last) / len(last)) if len(last) > 0 else float("nan")
+                # Use numpy via pandas for std to avoid an extra import
+                std_r = float(pd.Series(last).std(ddof=0)) if len(last) > 0 else float("nan")
+                avg_and_std_rwds.append((agent.name, mean_r, std_r))
             if debug:
-                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
-                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+                print(f"epoch: {i}, avg and std rwds: {avg_and_std_rwds}")
 
-    end = time.time()
-    if debug:
-        print("Took {} sec to train".format(end - start))
+            # Append logs
+            if output_dir:
+                for ainfo, stats in zip(agent_meta, avg_and_std_rwds):
+                    row = {
+                        "run_id": run_id,
+                        "config_hash": config_hash,
+                        "label": label,
+                        "setup": setup_name,
+                        "num_days": num_of_days,
+                        "num_trajs": num_of_trajs,
+                        "num_epochs": NUM_EPOCHS,
+                        "epoch": i,
+                        "agent_name": stats[0],
+                        "policy_class": ainfo["policy_class"],
+                        "policy_params_json": json.dumps(ainfo["policy_params"], sort_keys=True),
+                        "mean_reward": stats[1],
+                        "std_reward": stats[2],
+                        "n_trajs": num_of_trajs,
+                    }
+                    rows.append(row)
 
-    # Write parquet if enabled
-    if output_dir and rows:
-        os.makedirs(output_dir, exist_ok=True)
-        out_path = os.path.join(output_dir, f"epoch_agg__{run_id}.parquet")
-        df = pd.DataFrame(rows)
-        # Use pyarrow if available
-        try:
-            df.to_parquet(out_path, index=False)
-            print(f"Wrote epoch aggregates to {out_path}")
-        except Exception as e:
-            print(f"Failed to write parquet to {out_path}: {e}")
+            if ((i + 1) % 50) == 0:
+                avg_and_std_rwds_last_50_epochs = []
+                for agent in env.agents:
+                    last50 = agent.cumulative_rewards[-50 * num_of_trajs:]
+                    mean_r = float(sum(last50) / len(last50)) if len(last50) > 0 else float("nan")
+                    std_r = float(pd.Series(last50).std(ddof=0)) if len(last50) > 0 else float("nan")
+                    avg_and_std_rwds_last_50_epochs.append((agent.name, mean_r, std_r))
+                max_last_50_epochs = [(agent.name, float(max(agent.cumulative_rewards[-50 * num_of_trajs:]))) for agent in env.agents]
+                if debug:
+                    print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
+                    print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+
+        end = time.time()
+        if debug:
+            print("Took {} sec to train".format(end - start))
+        return run_id
+    finally:
+        # Always attempt to write whatever we have so far
+        if output_dir and rows:
+            os.makedirs(output_dir, exist_ok=True)
+            out_path = os.path.join(output_dir, f"epoch_agg__{run_id}.parquet")
+            df = pd.DataFrame(rows)
+            try:
+                df.to_parquet(out_path, index=False)
+                print(f"Wrote epoch aggregates to {out_path}")
+            except Exception as e:
+                print(f"Failed to write parquet to {out_path}: {e}")
 
 
 def main(yaml_path: str, output_dir: str | None = None) -> None:

@@ -63,14 +63,8 @@ def _worker_run(i: int, cfg: Dict[str, Any], parquet_dir: str, label_prefix: str
 		os.environ.setdefault("OMP_NUM_THREADS", str(tf_intra))
 		os.environ.setdefault("MKL_NUM_THREADS", str(tf_intra))
 
-	try:
-		repo_root = Path(__file__).resolve().parent.parent
-		if str(repo_root) not in sys.path:
-			sys.path.insert(0, str(repo_root))
-	except Exception:
-		pass
-
 	import random
+	import uuid
 	import numpy as np
 	from derby.experiments.one_camp_n_days_v2 import _run_simple_config
 
@@ -95,13 +89,15 @@ def _worker_run(i: int, cfg: Dict[str, Any], parquet_dir: str, label_prefix: str
 	start = time.time()
 	status = "ok"
 	error = None
+	run_id: str | None = str(uuid.uuid4())
 	try:
-		_run_simple_config(cfg, output_dir_override=parquet_dir)
+		# Pass a pre-generated run_id so even early failures have a known identifier
+		run_id = _run_simple_config(cfg, output_dir_override=parquet_dir, run_id=run_id)
 	except Exception as e:
 		status = "failed"
 		error = f"{type(e).__name__}: {e}"
 	dur = time.time() - start
-	return {"index": i, "status": status, "error": error, "duration_s": dur}
+	return {"index": i, "status": status, "error": error, "duration_s": dur, "run_id": run_id}
 
 
 def _load_yaml_mapping(path: Path) -> Dict[str, Any]:
@@ -119,13 +115,18 @@ def main(argv: List[str] | None = None) -> int:
 	ap = argparse.ArgumentParser(description="Parallel sweep runner for Derby experiments")
 	ap.add_argument("--base-yaml", type=str, required=True, help="Path to base config YAML file (.yaml/.yml)")
 	ap.add_argument("--grid-yaml", type=str, required=True, help="Path to param grid YAML file (.yaml/.yml)")
-	ap.add_argument("--parquet-dir", type=str, default="results/parquet", help="Output dir for Parquet logs")
+	# Unified output management
+	ap.add_argument(
+		"--output-dir",
+		type=str,
+		default="results",
+		help="Base output directory. Parquet files go to <output-dir>/parquet; results JSONL is written in <output-dir>."
+	)
 	ap.add_argument("--label-prefix", type=str, default="sweep-par", help="Prefix for per-run labels")
 	ap.add_argument("--base-seed", type=int, default=1337, help="Base seed for deterministic per-run seeds")
 	ap.add_argument("--max-workers", type=int, default=max(1, (os.cpu_count() or 2)), help="Parallel worker processes")
 	ap.add_argument("--tf-intra", type=int, default=1, help="TF intra-op threads per process (>=1)")
 	ap.add_argument("--tf-inter", type=int, default=1, help="TF inter-op threads per process (>=1)")
-	ap.add_argument("--results-jsonl", type=str, default="results/sweep/parallel_results.jsonl", help="Path to append JSONL run results")
 	ap.add_argument("--debug", action="store_true", help="Enable verbose training logs in all runs (overrides YAML configs)")
 	args = ap.parse_args(argv)
 
@@ -145,10 +146,16 @@ def main(argv: List[str] | None = None) -> int:
 		for cfg in configs:
 			cfg["debug"] = True
 
-	parquet_dir = args.parquet_dir
-	Path(parquet_dir).mkdir(parents=True, exist_ok=True)
-	out_dir = Path(args.results_jsonl).parent
-	out_dir.mkdir(parents=True, exist_ok=True)
+	# Resolve output locations
+	base_out = Path(args.output_dir)
+	parquet_dir = str(base_out / "parquet")
+	(base_out / "parquet").mkdir(parents=True, exist_ok=True)
+	base_out.mkdir(parents=True, exist_ok=True)
+
+	# Prepare results file paths (timestamped and stable)
+	timestamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+	results_jsonl_stable = base_out / "parallel_results.jsonl"
+	results_jsonl_ts = base_out / f"parallel_results_{timestamp}.jsonl"
 
 	print(f"Running {len(configs)} configs with {args.max_workers} workers; Parquet -> {parquet_dir}")
 	print(f"TF threads per proc: intra={args.tf_intra}, inter={args.tf_inter}")
@@ -177,9 +184,14 @@ def main(argv: List[str] | None = None) -> int:
 	speedup = (total_cpu_time / wall_time) if wall_time > 0 else float('nan')
 	efficiency = (speedup / args.max_workers) if args.max_workers > 0 else float('nan')
 
-	with open(args.results_jsonl, "w", encoding="utf-8") as f:
-		for rec in sorted(results, key=lambda r: r["index"]):
-			f.write(json.dumps(rec) + "\n")
+	# Write results to both stable and timestamped files
+	for out_path in (results_jsonl_stable, results_jsonl_ts):
+		with open(out_path, "w", encoding="utf-8") as f:
+			for rec in sorted(results, key=lambda r: r["index"]):
+				# Ensure run_id exists (may be None when a run fails before producing one)
+				if "run_id" not in rec:
+					rec = {**rec, "run_id": None}
+				f.write(json.dumps(rec) + "\n")
 
 	ok = sum(1 for r in results if r.get("status") == "ok")
 	fail = len(results) - ok
@@ -189,7 +201,7 @@ def main(argv: List[str] | None = None) -> int:
 		"Speedup: {spd:.2f}x | Efficiency: {eff:.2%} (workers={workers})".format(
 			ok=ok,
 			fail=fail,
-			out=args.results_jsonl,
+			out=str(results_jsonl_ts),
 			wall=wall_time,
 			cpu=total_cpu_time,
 			spd=speedup,
