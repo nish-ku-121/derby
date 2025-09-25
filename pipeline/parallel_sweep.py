@@ -53,7 +53,7 @@ def apply_overrides(base_cfg: Dict[str, Any], override: Dict[str, Any]) -> Dict[
 
 
 def _worker_run(i: int, cfg: Dict[str, Any], parquet_dir: str, label_prefix: str,
-				 base_seed: int, tf_intra: int, tf_inter: int) -> Dict[str, Any]:
+				 tf_intra: int, tf_inter: int) -> Dict[str, Any]:
 	os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 	if tf_intra > 0:
 		os.environ["TF_NUM_INTRAOP_THREADS"] = str(tf_intra)
@@ -63,15 +63,12 @@ def _worker_run(i: int, cfg: Dict[str, Any], parquet_dir: str, label_prefix: str
 		os.environ.setdefault("OMP_NUM_THREADS", str(tf_intra))
 		os.environ.setdefault("MKL_NUM_THREADS", str(tf_intra))
 
-	import random
 	import uuid
-	import numpy as np
 	from derby.experiments.one_camp_n_days_v2 import _run_simple_config
 
-	run_seed = (base_seed + i) % (2**31 - 1)
 	cfg = deepcopy(cfg)
 	cfg["label"] = f"{label_prefix}-i{i}"
-	cfg["seed"] = run_seed
+	# Do NOT set or override any seed here; if the user supplied one in cfg, leave it.
 	cfg["created_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 	try:
@@ -82,9 +79,6 @@ def _worker_run(i: int, cfg: Dict[str, Any], parquet_dir: str, label_prefix: str
 		print(f"[run {i}] starting label={cfg['label']} policy={policy0} lr={lr0} epochs={ne} trajs={nt}")
 	except Exception:
 		print(f"[run {i}] starting label={cfg['label']}")
-
-	random.seed(run_seed)
-	np.random.seed(run_seed)
 
 	start = time.time()
 	status = "ok"
@@ -123,7 +117,7 @@ def main(argv: List[str] | None = None) -> int:
 		help="Base output directory. Parquet files go to <output-dir>/parquet; results JSONL is written in <output-dir>."
 	)
 	ap.add_argument("--label-prefix", type=str, default="sweep-par", help="Prefix for per-run labels")
-	ap.add_argument("--base-seed", type=int, default=1337, help="Base seed for deterministic per-run seeds")
+	# Removed --base-seed: this orchestrator no longer manages RNG seeding; supply seeds in YAML if desired.
 	ap.add_argument("--max-workers", type=int, default=max(1, (os.cpu_count() or 2)), help="Parallel worker processes")
 	ap.add_argument("--tf-intra", type=int, default=1, help="TF intra-op threads per process (>=1)")
 	ap.add_argument("--tf-inter", type=int, default=1, help="TF inter-op threads per process (>=1)")
@@ -165,7 +159,7 @@ def main(argv: List[str] | None = None) -> int:
 	with ProcessPoolExecutor(max_workers=args.max_workers) as ex:
 		futures = {}
 		for i, cfg in enumerate(configs):
-			fut = ex.submit(_worker_run, i, cfg, parquet_dir, args.label_prefix, args.base_seed, args.tf_intra, args.tf_inter)
+			fut = ex.submit(_worker_run, i, cfg, parquet_dir, args.label_prefix, args.tf_intra, args.tf_inter)
 			futures[fut] = i
 		for fut in as_completed(futures):
 			i = futures[fut]

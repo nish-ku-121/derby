@@ -7,6 +7,7 @@ import time
 import hashlib
 
 import pandas as pd
+import numpy as np
 
 from derby.experiments.one_camp_n_days import Experiment
 from derby.core.agents import Agent
@@ -42,44 +43,68 @@ def _compute_config_hash(config: Dict[str, Any]) -> str:
     return hashlib.sha256(cfg_str.encode("utf-8")).hexdigest()
 
 
-def _run_simple_config(
+def run_experiment_from_config(
     config: Dict[str, Any],
     output_dir_override: str | None = None,
     run_id: str | None = None,
+    debug: bool = False,
 ) -> str:
     """
-        Simplified YAML schema runner.
-                Schema (simplified only):
-            num_days: int
-            num_trajs: int
-            num_epochs: int
-            debug: bool                    # optional
-            setup: setup_1 | setup_2       # name of Experiment setup function to call
-            agents:
-                - name: agent1
-                    policy: REINFORCE_Baseline_Gaussian_v3_1_MarketEnv_Continuous   # full class name
-                    params:                                                         # direct __init__ params for the policy
-            shape_reward: true
-        - name: agent2
-          policy: StepPolicy | FixedBidPolicy
-          params:
-            # for StepPolicy: (num_days, step)
-            # for FixedBidPolicy: (bid_per_item, total_limit)
-            # etc.
-    Notes:
-            - auction_item_spec_ids and budget_per_reach are auto-injected when the policy accepts them.
-            - Only simplified schema is supported in this file (no exp_* fallback).
+        Run an experiment described by an in-memory config dict (public API).
+
+        Supported (simplified) YAML schema:
+            num_days: int                    # days per trajectory (episode length / horizon)
+            num_trajs: int                   # trajectories (episodes) per epoch
+            num_epochs: int                  # number of training epochs
+            setup: setup_1 | setup_2         # name of Experiment.setup_* method
+            seed: int (optional)             # reproducibility seed (YAML ONLY; no CLI override)
+            label: str (optional)            # carried through to parquet output (excluded from hash)
+            agents:                          # list in execution order
+                - name: agent1                 # optional; auto-generated if omitted
+                    policy: FullPolicyClassName  # MUST exactly match symbol in derby.core.policies
+                    params:                      # kwargs passed to the policy __init__ (filtered)
+                        learning_rate: 5e-6        # example; type coercion attempted if string
+                        shape_reward: false        # example boolean parameter
+                - name: baseline
+                    policy: FixedBidPolicy
+                    params:
+                        bid_per_item: 5
+                        total_limit: 5
+
+        Behavior / Notes:
+            - Seeds: If 'seed' present it is validated & passed to Experiment; absent => stochastic run.
+            - Policy parameter filtering: only kwargs accepted by the policy __init__ are forwarded.
+            - Auto-injected params (if accepted and not already provided):
+                    auction_item_spec_ids, budget_per_reach (scaled average budget-per-reach estimate).
+            - State / action scaling applied ONLY to TensorFlow (learning) policies; baseline / static
+                policies (e.g., FixedBidPolicy) receive raw state/action data to maintain legacy semantics.
+            - Per-epoch metrics: mean & std (population, ddof=0) of per-trajectory rewards for each agent.
+            - Logging: If an output directory is provided (via CLI -o/--output-dir), a parquet file with
+                per-epoch rows is written containing config_hash, seed, label, and reward stats.
+            - config_hash: SHA256 over JSON dump of config minus excluded keys (label, logging) ensuring
+                distinct seeds produce distinct hashes.
+            - Returns: run_id (str) used in parquet filename.
+            - Unsupported: legacy exp_* experiment mappings; this runner only supports the simplified schema.
     """
     num_days = int(config['num_days'])
     num_trajs = int(config['num_trajs'])
     num_epochs = int(config['num_epochs'])
-    debug = bool(config.get('debug', False))
+    # If legacy configs include 'debug', ignore it (prefer CLI). Optional soft warning.
+    if 'debug' in config and config['debug'] and not debug:
+        print("[WARN] 'debug' key in YAML is ignored; use --debug CLI flag instead.")
     label = config.get('label')  # optional; default None if missing
 
     # Optional logging configuration (CLI only; YAML logging keys are ignored)
     output_dir = output_dir_override
 
-    experiment = Experiment()
+    yaml_seed = config.get('seed')
+    seed = None
+    if yaml_seed is not None:
+        try:
+            seed = int(yaml_seed)
+        except Exception:
+            raise ValueError(f"Invalid seed value in config: {yaml_seed}")
+    experiment = Experiment(seed=seed)
 
     # Choose environment setup
     setup_name = config.get('setup')  # full function name like 'setup_1'
@@ -92,6 +117,8 @@ def _run_simple_config(
 
     # Get scaling/de-scaling helpers and scaled_avg_bpr
     scale_states_func, actions_scaler, scale_actions_func, descale_actions_func, scaled_avg_bpr = experiment.get_transformed(env)
+    if debug:
+        print("[DEBUG] scaled_avg_bpr=", scaled_avg_bpr)
 
     # Build agents
     agents_cfg: List[Dict[str, Any]] = config['agents']
@@ -127,7 +154,19 @@ def _run_simple_config(
 
         policy_instance = policy_cls(**filtered_params)
 
-        agent = Agent(name, policy_instance, scale_states_func, scale_actions_func, descale_actions_func)
+        # IMPORTANT:
+        # In the legacy experiment scripts, only learning (TF) policies received
+        # state normalization + action scaling/descaling. Baseline policies like
+        # FixedBidPolicy operated directly on raw state vectors (e.g. auction_item_spec_id)
+        # and produced already-descaled actions. Passing them through the scalers
+        # distorts spec IDs and bids, leading to incorrect rewards (e.g. the RL
+        # policy capturing almost all reward, others zero). We replicate the legacy
+        # behavior here: only TensorFlow policies (policy_instance.is_tensorflow == True)
+        # get the scalers.
+        if getattr(policy_instance, 'is_tensorflow', False):
+            agent = Agent(name, policy_instance, scale_states_func, scale_actions_func, descale_actions_func)
+        else:
+            agent = Agent(name, policy_instance)  # identity transforms
         agents.append(agent)
         agent_meta.append({
             "agent_name": name,
@@ -156,7 +195,9 @@ def _run_simple_config(
     start = time.time()
     try:
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            # TODO: hardcoding the `debug` param to False to suppress deeper debug prints.
+            #   Consider passing the `debug` variable instead.
+            train(env, num_of_trajs, horizon_cutoff, debug=False)
             # Compute per-agent epoch aggregates
             avg_and_std_rwds = []
             for agent in env.agents:
@@ -176,6 +217,7 @@ def _run_simple_config(
                         "config_hash": config_hash,
                         "label": label,
                         "setup": setup_name,
+                        "seed": seed,
                         "num_days": num_of_days,
                         "num_trajs": num_of_trajs,
                         "num_epochs": NUM_EPOCHS,
@@ -191,15 +233,24 @@ def _run_simple_config(
 
             if ((i + 1) % 50) == 0:
                 avg_and_std_rwds_last_50_epochs = []
+                max_last_50_epochs = []
                 for agent in env.agents:
                     last50 = agent.cumulative_rewards[-50 * num_of_trajs:]
                     mean_r = float(sum(last50) / len(last50)) if len(last50) > 0 else float("nan")
                     std_r = float(pd.Series(last50).std(ddof=0)) if len(last50) > 0 else float("nan")
                     avg_and_std_rwds_last_50_epochs.append((agent.name, mean_r, std_r))
-                max_last_50_epochs = [(agent.name, float(max(agent.cumulative_rewards[-50 * num_of_trajs:]))) for agent in env.agents]
+
+                    # Correct max: compute per-epoch mean rewards and then take their max.
+                    if len(last50) == 50 * num_of_trajs and num_of_trajs > 0:
+                        per_epoch_means = np.array(last50).reshape(50, num_of_trajs).mean(axis=1)
+                        max_epoch_mean = float(np.max(per_epoch_means))
+                    else:
+                        max_epoch_mean = mean_r
+                    max_last_50_epochs.append((agent.name, max_epoch_mean))
+
                 if debug:
                     print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
-                    print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+                    print("Max of last 50 epochs (epoch means): {}".format(max_last_50_epochs))
 
         end = time.time()
         if debug:
@@ -218,7 +269,7 @@ def _run_simple_config(
                 print(f"Failed to write parquet to {out_path}: {e}")
 
 
-def main(yaml_path: str, output_dir: str | None = None) -> None:
+def main(yaml_path: str, output_dir: str | None = None, debug: bool = False) -> None:
     """
     Run an experiment from a YAML config file.
     YAML schema:
@@ -227,7 +278,7 @@ def main(yaml_path: str, output_dir: str | None = None) -> None:
       num_trajs: int
       num_epochs: int
       lr: float
-      debug: bool (optional)
+    seed: int (optional)
     """
     try:
         import yaml  # type: ignore
@@ -240,7 +291,7 @@ def main(yaml_path: str, output_dir: str | None = None) -> None:
         config = yaml.safe_load(f)
 
     # Simplified schema only
-    _run_simple_config(config, output_dir_override=output_dir)
+    run_experiment_from_config(config, output_dir_override=output_dir, debug=debug)
 
 
 if __name__ == "__main__":
@@ -248,6 +299,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Derby experiment from YAML config.")
     parser.add_argument('--config', required=True, type=str, help='Path to YAML config file')
     parser.add_argument('-o', '--output-dir', dest='output_dir', type=str, default=None,
-                        help='Optional directory to write epoch-level parquet logs (CLI only; YAML logging keys are ignored)')
+                        help='Optional directory to write epoch-level parquet logs')
+    parser.add_argument('--debug', action='store_true', help='Enable verbose per-epoch logging')
     args = parser.parse_args()
-    main(args.config, output_dir=args.output_dir)
+    main(args.config, output_dir=args.output_dir, debug=args.debug)

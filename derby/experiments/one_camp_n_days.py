@@ -21,7 +21,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 class Experiment:
 
-    def __init__(self):
+    def __init__(self, seed: int | None = None):
         # Reset class-level UID generators so that spec and campaign IDs are predictable
         # within each experiment run. This avoids cross-run drift when multiple processes
         # or repeated runs occur in the same Python interpreter.
@@ -34,6 +34,29 @@ class Experiment:
         except Exception:
             # Best-effort; if modules are not yet imported, continue.
             pass
+
+        # Optional global seeding for reproducibility
+        # Only performed if seed is not None to preserve prior stochastic behavior by default.
+        self.seed = seed
+        if seed is not None:
+            try:
+                import random
+                random.seed(seed)
+            except Exception:
+                pass
+            try:
+                np.random.seed(seed)
+            except Exception:
+                pass
+            try:
+                import tensorflow as tf  # noqa
+                tf.random.set_seed(seed)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            # Help make hashing deterministic in some Python ops
+            os.environ.setdefault('PYTHONHASHSEED', str(seed))
+            # Informational print (kept minimal to avoid noisy logs)
+            print(f"[Experiment] Seed set to {seed}")
         self.auction_item_specs = [
                         AuctionItemSpecification(name="male", item_type={"male"}),
                         AuctionItemSpecification(name="female", item_type={"female"})
@@ -222,19 +245,41 @@ class Experiment:
         print("agent policies: {}".format([agent.policy for agent in env.agents]))
 
         start = time.time()
+        # Rolling window (epoch means only) per agent for the last 50 epochs
+        last_50_epoch_means = {agent.name: [] for agent in env.agents}
 
         for i in range(NUM_EPOCHS):
             train(env, num_of_trajs, horizon_cutoff, debug=debug)
-            avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
-                            np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
-            print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
+            # Per-epoch mean/std across trajectories for each agent
+            epoch_stats = []
+            for agent in env.agents:
+                last_trajs = agent.cumulative_rewards[-num_of_trajs:]
+                mean_epoch = float(np.mean(last_trajs)) if last_trajs.size > 0 else float("nan")
+                std_epoch = float(np.std(last_trajs)) if last_trajs.size > 0 else float("nan")
+                epoch_stats.append((agent.name, mean_epoch, std_epoch))
+                # Maintain rolling 50 means
+                l = last_50_epoch_means[agent.name]
+                l.append(mean_epoch)
+                if len(l) > 50:
+                    l.pop(0)
+            print("epoch: {}, avg and std rwds: {}".format(i, epoch_stats))
 
-            if ((i+1) % 50) == 0:
-                avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
-                            np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
-                max_last_50_epochs = [(agent.name, np.max(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
-                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
-                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+            if ((i + 1) % 50) == 0:
+                # Compute avg/std over the stored epoch means (not raw trajectories)
+                avg_and_std_last_50 = []
+                max_last_50 = []
+                for agent in env.agents:
+                    window = last_50_epoch_means[agent.name]
+                    if len(window) > 0:
+                        avg_ = float(np.mean(window))
+                        std_ = float(np.std(window))
+                        max_ = float(np.max(window))
+                    else:
+                        avg_ = std_ = max_ = float("nan")
+                    avg_and_std_last_50.append((agent.name, avg_, std_))
+                    max_last_50.append((agent.name, max_))
+                print("Avg. of last 50 epochs: {}".format(avg_and_std_last_50))
+                print("Max of last 50 epochs (epoch means): {}".format(max_last_50))
         
         end = time.time()
         print("Took {} sec to train".format(end-start))
@@ -3939,6 +3984,8 @@ class Experiment:
 
 
 if __name__ == '__main__':
+    # CLI usage (legacy): python one_camp_n_days.py exp num_days num_trajs num_epochs lr [debug] [seed]
+    # Added optional seed argument at position 7.
     exp = sys.argv[1]
     num_days = int(sys.argv[2])
     num_trajs = int(sys.argv[3])
@@ -3950,9 +3997,15 @@ if __name__ == '__main__':
             debug = True
         else:
             debug = False
-    except:
+    except Exception:
         debug = False
-    experiment = Experiment()
+    # Optional seed (position 7)
+    seed = None
+    try:
+        seed = int(sys.argv[7])
+    except Exception:
+        seed = None
+    experiment = Experiment(seed=seed)
     function_mappings = {
         'exp_1': experiment.exp_1,
         'exp_2': experiment.exp_2,
