@@ -5,6 +5,7 @@ import json
 import uuid
 import time
 import hashlib
+import logging
 
 import pandas as pd
 import numpy as np
@@ -13,6 +14,9 @@ from derby.experiments.one_camp_n_days import Experiment
 from derby.core.agents import Agent
 import derby.core.policies as policy_mod
 from derby.core.environments import train
+
+# Module-level logger
+logger = logging.getLogger(__name__)
 
 
 def _resolve_policy_class(name: str):
@@ -47,51 +51,46 @@ def run_experiment_from_config(
     config: Dict[str, Any],
     output_dir_override: str | None = None,
     run_id: str | None = None,
-    debug: bool = False,
 ) -> str:
-    """
-        Run an experiment described by an in-memory config dict (public API).
+    """Run an experiment described by an in-memory config dict (public API).
 
-        Supported (simplified) YAML schema:
-            num_days: int                    # days per trajectory (episode length / horizon)
-            num_trajs: int                   # trajectories (episodes) per epoch
-            num_epochs: int                  # number of training epochs
-            setup: setup_1 | setup_2         # name of Experiment.setup_* method
-            seed: int (optional)             # reproducibility seed (YAML ONLY; no CLI override)
-            label: str (optional)            # carried through to parquet output (excluded from hash)
-            agents:                          # list in execution order
-                - name: agent1                 # optional; auto-generated if omitted
-                    policy: FullPolicyClassName  # MUST exactly match symbol in derby.core.policies
-                    params:                      # kwargs passed to the policy __init__ (filtered)
-                        learning_rate: 5e-6        # example; type coercion attempted if string
-                        shape_reward: false        # example boolean parameter
-                - name: baseline
-                    policy: FixedBidPolicy
-                    params:
-                        bid_per_item: 5
-                        total_limit: 5
+    Supported (simplified) YAML schema:
+        num_days: int                    # days per trajectory (episode length / horizon)
+        num_trajs: int                   # trajectories (episodes) per epoch
+        num_epochs: int                  # number of training epochs
+        setup: setup_1 | setup_2         # name of Experiment.setup_* method
+        seed: int (optional)             # reproducibility seed (YAML ONLY; no CLI override)
+        label: str (optional)            # carried through to parquet output (excluded from hash)
+        agents:                          # list in execution order
+            - name: agent1                 # optional; auto-generated if omitted
+              policy: FullPolicyClassName  # MUST exactly match symbol in derby.core.policies
+              params:                      # kwargs passed to the policy __init__ (filtered)
+                  learning_rate: 5e-6
+                  shape_reward: false
+            - name: baseline
+              policy: FixedBidPolicy
+              params:
+                  bid_per_item: 5
+                  total_limit: 5
 
-        Behavior / Notes:
-            - Seeds: If 'seed' present it is validated & passed to Experiment; absent => stochastic run.
-            - Policy parameter filtering: only kwargs accepted by the policy __init__ are forwarded.
-            - Auto-injected params (if accepted and not already provided):
-                    auction_item_spec_ids, budget_per_reach (scaled average budget-per-reach estimate).
-            - State / action scaling applied ONLY to TensorFlow (learning) policies; baseline / static
-                policies (e.g., FixedBidPolicy) receive raw state/action data to maintain legacy semantics.
-            - Per-epoch metrics: mean & std (population, ddof=0) of per-trajectory rewards for each agent.
-            - Logging: If an output directory is provided (via CLI -o/--output-dir), a parquet file with
-                per-epoch rows is written containing config_hash, seed, label, and reward stats.
-            - config_hash: SHA256 over JSON dump of config minus excluded keys (label, logging) ensuring
-                distinct seeds produce distinct hashes.
-            - Returns: run_id (str) used in parquet filename.
-            - Unsupported: legacy exp_* experiment mappings; this runner only supports the simplified schema.
+    Behavior / Notes:
+        - Seeds: If 'seed' present it is validated & passed to Experiment; absent => stochastic run.
+        - Policy parameter filtering: only kwargs accepted by the policy __init__ are forwarded.
+        - Auto-injected params (if accepted and not already provided):
+              auction_item_spec_ids, budget_per_reach (scaled average budget-per-reach estimate).
+        - State/action scaling applied ONLY to TensorFlow (learning) policies; baseline / static
+          policies (e.g., FixedBidPolicy) receive raw state/action data to maintain legacy semantics.
+        - Per-epoch metrics: mean & std (population, ddof=0) of per-trajectory rewards for each agent.
+        - Logging: If an output directory is provided (via CLI -o/--output-dir), a parquet file with
+          per-epoch rows is written containing config_hash, seed, label, and reward stats.
+        - config_hash: SHA256 over JSON dump of config minus excluded keys (label, logging) ensuring
+          distinct seeds produce distinct hashes.
+        - Returns: run_id (str) used in parquet filename.
+        - Unsupported: legacy exp_* experiment mappings; this runner only supports the simplified schema.
     """
     num_days = int(config['num_days'])
     num_trajs = int(config['num_trajs'])
     num_epochs = int(config['num_epochs'])
-    # If legacy configs include 'debug', ignore it (prefer CLI). Optional soft warning.
-    if 'debug' in config and config['debug'] and not debug:
-        print("[WARN] 'debug' key in YAML is ignored; use --debug CLI flag instead.")
     label = config.get('label')  # optional; default None if missing
 
     # Optional logging configuration (CLI only; YAML logging keys are ignored)
@@ -117,8 +116,7 @@ def run_experiment_from_config(
 
     # Get scaling/de-scaling helpers and scaled_avg_bpr
     scale_states_func, actions_scaler, scale_actions_func, descale_actions_func, scaled_avg_bpr = experiment.get_transformed(env)
-    if debug:
-        print("[DEBUG] scaled_avg_bpr=", scaled_avg_bpr)
+    logger.debug("scaled_avg_bpr=%s", scaled_avg_bpr)
 
     # Build agents
     agents_cfg: List[Dict[str, Any]] = config['agents']
@@ -179,13 +177,11 @@ def run_experiment_from_config(
     num_of_trajs = num_trajs
     NUM_EPOCHS = num_epochs
     horizon_cutoff = 100
-    if debug:
-        print(f"days per traj: {num_of_days}, trajs per epoch: {num_of_trajs}, EPOCHS: {NUM_EPOCHS}")
+    logger.debug("days per traj: %s, trajs per epoch: %s, EPOCHS: %s", num_of_days, num_of_trajs, NUM_EPOCHS)
 
     env.vectorize = True
     env.init(agents, num_of_days)
-    if debug:
-        print("agent policies: {}".format([agent.policy for agent in env.agents]))
+    logger.debug("agent policies: %s", [agent.policy for agent in env.agents])
 
     # Determine run identifier (allow caller to fix it, so failures can still be correlated)
     run_id = run_id or str(uuid.uuid4())
@@ -195,9 +191,7 @@ def run_experiment_from_config(
     start = time.time()
     try:
         for i in range(NUM_EPOCHS):
-            # TODO: hardcoding the `debug` param to False to suppress deeper debug prints.
-            #   Consider passing the `debug` variable instead.
-            train(env, num_of_trajs, horizon_cutoff, debug=False)
+            train(env, num_of_trajs, horizon_cutoff)
             # Compute per-agent epoch aggregates
             avg_and_std_rwds = []
             for agent in env.agents:
@@ -206,8 +200,8 @@ def run_experiment_from_config(
                 # Use numpy via pandas for std to avoid an extra import
                 std_r = float(pd.Series(last).std(ddof=0)) if len(last) > 0 else float("nan")
                 avg_and_std_rwds.append((agent.name, mean_r, std_r))
-            if debug:
-                print(f"epoch: {i}, avg and std rwds: {avg_and_std_rwds}")
+
+            logger.info("epoch=%s avg_and_std_rwds=%s", i, avg_and_std_rwds)
 
             # Append logs
             if output_dir:
@@ -248,13 +242,11 @@ def run_experiment_from_config(
                         max_epoch_mean = mean_r
                     max_last_50_epochs.append((agent.name, max_epoch_mean))
 
-                if debug:
-                    print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
-                    print("Max of last 50 epochs (epoch means): {}".format(max_last_50_epochs))
+                logger.info("Avg of last 50 epochs: %s", avg_and_std_rwds_last_50_epochs)
+                logger.info("Max of last 50 epochs (epoch means): %s", max_last_50_epochs)
 
         end = time.time()
-        if debug:
-            print("Took {} sec to train".format(end - start))
+        logger.info("Training complete in %.2f sec", end - start)
         return run_id
     finally:
         # Always attempt to write whatever we have so far
@@ -264,22 +256,12 @@ def run_experiment_from_config(
             df = pd.DataFrame(rows)
             try:
                 df.to_parquet(out_path, index=False)
-                print(f"Wrote epoch aggregates to {out_path}")
+                logger.info("Wrote epoch aggregates to %s", out_path)
             except Exception as e:
-                print(f"Failed to write parquet to {out_path}: {e}")
+                logger.error("Failed to write parquet to %s: %s", out_path, e)
 
 
-def main(yaml_path: str, output_dir: str | None = None, debug: bool = False) -> None:
-    """
-    Run an experiment from a YAML config file.
-    YAML schema:
-      exp: str (e.g., exp_1000)
-      num_days: int
-      num_trajs: int
-      num_epochs: int
-      lr: float
-    seed: int (optional)
-    """
+def main(yaml_path: str, output_dir: str | None = None, log_level: str | None = "INFO") -> None:
     try:
         import yaml  # type: ignore
     except ImportError as e:
@@ -287,11 +269,27 @@ def main(yaml_path: str, output_dir: str | None = None, debug: bool = False) -> 
             "PyYAML is required for --config usage. Install with 'poetry add pyyaml' or 'pip install pyyaml'."
         ) from e
 
+    # Configure logging here (CLI entrypoint)
+    suppression_tokens = {"NONE", "OFF", "QUIET", "SILENT", "NA", "N/A"}
+    if log_level is None:
+        log_level = "INFO"
+    lvl = str(log_level).upper()
+    if lvl in suppression_tokens:
+        logging.disable(logging.CRITICAL)
+    else:
+        root = logging.getLogger()
+        if not root.handlers:
+            logging.basicConfig(
+                level=getattr(logging, lvl, logging.INFO),
+                format='%(asctime)s %(levelname)s [%(name)s] %(message)s',
+            )
+        else:
+            root.setLevel(getattr(logging, lvl, logging.INFO))
+
     with open(yaml_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
 
-    # Simplified schema only
-    run_experiment_from_config(config, output_dir_override=output_dir, debug=debug)
+    run_experiment_from_config(config, output_dir_override=output_dir)
 
 
 if __name__ == "__main__":
@@ -300,6 +298,7 @@ if __name__ == "__main__":
     parser.add_argument('--config', required=True, type=str, help='Path to YAML config file')
     parser.add_argument('-o', '--output-dir', dest='output_dir', type=str, default=None,
                         help='Optional directory to write epoch-level parquet logs')
-    parser.add_argument('--debug', action='store_true', help='Enable verbose per-epoch logging')
+    parser.add_argument('--log-level', dest='log_level', default='INFO', type=str,
+                        help='Logging verbosity for this run (e.g. DEBUG, INFO, WARNING, ERROR, CRITICAL, NONE). Not propagated to inner APIs.')
     args = parser.parse_args()
-    main(args.config, output_dir=args.output_dir, debug=args.debug)
+    main(args.config, output_dir=args.output_dir, log_level=args.log_level)
