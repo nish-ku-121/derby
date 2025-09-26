@@ -8,8 +8,12 @@ set -euo pipefail
 #
 # Behavior:
 #   - For each provided grid YAML path, runs the parallel sweeper sequentially.
-#   - Output directory and label prefix are derived from the grid filename stem.
-#     For configs/grid_sweep_1.yaml -> OUT_DIR=results/grid_sweep_1 and LABEL_PREFIX=grid_sweep_1
+#   - Output directory derived from the grid filename stem.
+#     For configs/grid_sweep_1.yaml -> OUT_DIR=results/grid_sweep_1
+#   - Labels inside each sweep variant are formed as <base_label>-i<index> where base_label is:
+#       (1) the variant's existing label if provided in base YAML after overrides, else
+#       (2) the base YAML's label, else
+#       (3) the grid filename stem.
 #   - Base config is fixed at configs/base_sweep.yaml
 #
 # Outputs per grid:
@@ -37,7 +41,6 @@ for GRID_YAML in "$@"; do
   BASENAME="$(basename -- "$GRID_YAML")"
   STEM="${BASENAME%.*}"
   OUT_DIR="results/${STEM}"
-  LABEL_PREFIX="${STEM}"
 
   echo "=== Running grid sweep ==="
   echo "YAML: ${GRID_YAML}"
@@ -48,8 +51,7 @@ for GRID_YAML in "$@"; do
   make docker-run ARGS="python -u -m pipeline.parallel_sweep \
     --base-yaml ${BASE_YAML} \
     --grid-yaml ${GRID_YAML} \
-    --output-dir ${OUT_DIR} \
-    --label-prefix ${LABEL_PREFIX}"
+    --output-dir ${OUT_DIR}"
 
   echo "=== Completed: ${STEM} ==="
   echo
