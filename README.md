@@ -152,12 +152,12 @@ Tip: If you want many variants, use the parallel sweeper below instead of hand-e
 Use the process-based sweeper to run many configurations in parallel and collect results:
 
 ```bash
-make docker-run ARGS='python -u -m pipeline.parallel_sweep \
+make docker-run ARGS="python -u -m pipeline.parallel_sweep \
     --base-yaml configs/base_sweep.yaml \
     --grid-yaml configs/grid_sweep_1.yaml \
     --output-dir results/sweep \
     --log-level INFO \
-    --tf-intra 1 --tf-inter 1'
+    --tf-intra 1 --tf-inter 1"
 ```
 
 Key ideas:

@@ -8,6 +8,7 @@ import time
 import itertools
 import logging
 import multiprocessing as mp
+import signal
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List
@@ -276,6 +277,63 @@ def main(argv: List[str] | None = None) -> int:
 	)
 	args = ap.parse_args(argv)
 
+	# --- Interrupt Handling Setup -------------------------------------------------
+	# We install a SIGINT/SIGTERM handler that (a) prevents the Python default multi-KeyboardInterrupt
+	# escalation dance, and (b) forcibly terminates any worker processes started by the executor
+	# so they don't linger (common with TensorFlow processes on Windows / spawn start method).
+
+	shutdown_event = mp.Event()
+	# We'll stash the active executor in an enclosing mutable so the handler can access it.
+	executor_box: Dict[str, Any] = {"executor": None}
+	interrupt_counter = {"count": 0}
+
+	def _terminate_executor(ex, timeout: float = 5.0):  # best-effort hard stop
+		if ex is None:
+			return
+		# Access internal process list (private API but widely used; guarded with getattr)
+		procs = list(getattr(ex, "_processes", {}).values())  # type: ignore[attr-defined]
+		for p in procs:
+			try:
+				if p.is_alive():
+					p.terminate()
+			except Exception:
+				pass
+		# Wait briefly for graceful terminate
+		end = time.time() + timeout
+		while time.time() < end and any(p.is_alive() for p in procs):
+			time.sleep(0.1)
+		# Force kill stragglers
+		for p in procs:
+			try:
+				if p.is_alive():
+					p.kill()
+			except Exception:
+				pass
+
+	def _signal_handler(signum, frame):  # pragma: no cover (signal handling nondeterministic in tests)
+		interrupt_counter["count"] += 1
+		c = interrupt_counter["count"]
+		if c == 1:
+			logger.warning("Received signal %s (Ctrl+C). Initiating shutdown of workers... (press Ctrl+C again to force exit)", signum)
+			shutdown_event.set()
+			# Terminate immediately; we favour fast responsiveness over waiting because TF imports can hang.
+			_terminate_executor(executor_box.get("executor"))
+		elif c == 2:
+			logger.error("Second interrupt: forcing immediate termination of remaining workers and exiting.")
+			_terminate_executor(executor_box.get("executor"), timeout=1.0)
+			os._exit(130)  # 128 + SIGINT
+		else:
+			# Further presses just hard-exit.
+			os._exit(130)
+
+	# Register handlers (best-effort; some signals may not exist on all platforms)
+	for _sig_name in ("SIGINT", "SIGTERM"):
+		if hasattr(signal, _sig_name):
+			try:
+				signal.signal(getattr(signal, _sig_name), _signal_handler)
+			except Exception:
+				pass
+
 	# Configure sweep-level logging early
 	_sweep_level = _normalize_log_level(args.log_level)
 	_configure_sweep_logging(_sweep_level)
@@ -364,25 +422,47 @@ def main(argv: List[str] | None = None) -> int:
 	if ctx is not None:
 		executor_kwargs["mp_context"] = ctx
 
-	with ProcessPoolExecutor(**executor_kwargs) as ex:
-		futures = {}
-		for i, cfg in enumerate(configs):
-			fut = ex.submit(_worker_run, i, cfg, parquet_dir, args.tf_intra, args.tf_inter, _sweep_level)
-			futures[fut] = i
-		for fut in as_completed(futures):
-			i = futures[fut]
-			try:
-				res = fut.result()
-			except Exception as e:
-				res = {"index": i, "status": "failed", "error": f"{type(e).__name__}: {e}", "duration_s": None}
-			results.append(res)
-			dur = res.get('duration_s')
-			dur_str = f"{dur:.2f}s" if isinstance(dur, (int, float)) and dur is not None else "n/a"
-			rid = res.get('run_id')
-			if rid:
-				logger.info("[run %s] finished run_id=%s status=%s elapsed=%s", i, rid, res['status'], dur_str)
-			else:
-				logger.info("[run %s] finished status=%s elapsed=%s", i, res['status'], dur_str)
+	try:
+		with ProcessPoolExecutor(**executor_kwargs) as ex:
+			executor_box["executor"] = ex
+			futures = {}
+			for i, cfg in enumerate(configs):
+				if shutdown_event.is_set():
+					logger.warning("Shutdown requested before submitting config %s; skipping remaining submissions.", i)
+					break
+				fut = ex.submit(_worker_run, i, cfg, parquet_dir, args.tf_intra, args.tf_inter, _sweep_level)
+				futures[fut] = i
+			# Collect results as they complete; exit early if shutdown_event set.
+			for fut in as_completed(futures):
+				i = futures.get(fut)
+				if i is None:
+					continue
+				# This future is complete (as_completed guarantees); record its result.
+				try:
+					res = fut.result()
+				except Exception as e:
+					res = {"index": i, "status": "failed", "error": f"{type(e).__name__}: {e}", "duration_s": None}
+				results.append(res)
+				dur = res.get('duration_s')
+				dur_str = f"{dur:.2f}s" if isinstance(dur, (int, float)) and dur is not None else "n/a"
+				rid = res.get('run_id')
+				if rid:
+					logger.info("[run %s] finished run_id=%s status=%s elapsed=%s", i, rid, res['status'], dur_str)
+				else:
+					logger.info("[run %s] finished status=%s elapsed=%s", i, res['status'], dur_str)
+				# After recording, if an interrupt has been signaled, cancel remainder and break.
+				if shutdown_event.is_set():
+					logger.warning("Interrupt detected; cancelling remaining pending futures (recorded %s completed results).", len(results))
+					for f2, idx2 in list(futures.items()):
+						if not f2.done():
+							f2.cancel()
+					break
+	except KeyboardInterrupt:  # Fallback safety (should be intercepted by handler already)
+		logger.error("KeyboardInterrupt caught in main; terminating workers now.")
+		_terminate_executor(executor_box.get("executor"))
+		shutdown_event.set()
+	finally:
+		executor_box["executor"] = None
 
 	overall_end = time.time()
 	wall_time = overall_end - overall_start
@@ -390,17 +470,46 @@ def main(argv: List[str] | None = None) -> int:
 	speedup = (total_cpu_time / wall_time) if wall_time > 0 else float('nan')
 	efficiency = (speedup / args.max_workers) if args.max_workers > 0 else float('nan')
 
+	# Compute success/failure counts BEFORE writing footer metadata.
+	ok = sum(1 for r in results if r.get("status") == "ok")
+	fail = len(results) - ok
+
 	# Write results to both stable and timestamped files
+	# Determine if an interrupt occurred (available if signal handler ran)
+	try:
+		_interrupted = shutdown_event.is_set()  # type: ignore[name-defined]
+		try:
+			# interrupt_counter defined in main scope above
+			if not _interrupted and 'interrupt_counter' in locals():  # type: ignore
+				_interrupted = locals().get('interrupt_counter', {}).get('count', 0) > 0  # type: ignore
+		except Exception:
+			pass
+	except Exception:
+		_interrupted = False
+
+	sorted_results = sorted(results, key=lambda r: r["index"])
+	meta_footer = {
+		"type": "meta",
+		"interrupted": bool(_interrupted),
+		"total_configs": len(configs),  # planned configs
+		"completed_runs": len(sorted_results),  # runs that produced a result record
+		"ok_runs": ok,
+		"failed_runs": fail,
+		"wall_time_s": wall_time,
+		"aggregate_cpu_time_s": total_cpu_time,
+		"speedup": speedup,
+		"efficiency": efficiency,
+		"timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+	}
 	for out_path in (results_jsonl_stable, results_jsonl_ts):
 		with open(out_path, "w", encoding="utf-8") as f:
-			for rec in sorted(results, key=lambda r: r["index"]):
-				# Ensure run_id exists (may be None when a run fails before producing one)
+			for rec in sorted_results:
 				if "run_id" not in rec:
 					rec = {**rec, "run_id": None}
 				f.write(json.dumps(rec) + "\n")
+			# Append metadata footer line
+			f.write(json.dumps(meta_footer) + "\n")
 
-	ok = sum(1 for r in results if r.get("status") == "ok")
-	fail = len(results) - ok
 
 	# Diagnostic: detect parquet files whose run_ids are not in our results list (possible leftovers or stray writes)
 	try:
