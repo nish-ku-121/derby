@@ -1,4 +1,13 @@
 import numpy as np
+import logging
+# NOTE (legacy experiments):
+# The functions named exp_* in this module are intentionally left with their
+# original print statements. They are considered legacy / exploratory experiments
+# where preserving the exact historical console output is useful for comparison
+# and reproducibility. Do NOT migrate prints inside any def exp_* to the central
+# logging framework unless the migration policy changes. Non-exp_* helpers
+# (e.g. run, setup_*, get_* transformers) have been updated to use the module
+# logger for structured logging.
 from derby.core.basic_structures import AuctionItemSpecification
 from derby.core.ad_structures import Campaign
 from derby.core.auctions import KthPriceAuction
@@ -14,6 +23,8 @@ import sys
 import os
 import tensorflow as tf
 
+logger = logging.getLogger(__name__)
+
 # Killing optional CPU driver warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -21,7 +32,42 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 class Experiment:
 
-    def __init__(self):
+    def __init__(self, seed: int | None = None):
+        # Reset class-level UID generators so that spec and campaign IDs are predictable
+        # within each experiment run. This avoids cross-run drift when multiple processes
+        # or repeated runs occur in the same Python interpreter.
+        try:
+            import itertools
+            from derby.core.basic_structures import AuctionItemSpecification
+            from derby.core.ad_structures import Campaign
+            AuctionItemSpecification._uid_generator = itertools.count(1)
+            Campaign._uid_generator = itertools.count(1)
+        except Exception:
+            # Best-effort; if modules are not yet imported, continue.
+            pass
+
+        # Optional global seeding for reproducibility
+        # Only performed if seed is not None to preserve prior stochastic behavior by default.
+        self.seed = seed
+        if seed is not None:
+            try:
+                import random
+                random.seed(seed)
+            except Exception:
+                pass
+            try:
+                np.random.seed(seed)
+            except Exception:
+                pass
+            try:
+                import tensorflow as tf  # noqa
+                tf.random.set_seed(seed)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            # Help make hashing deterministic in some Python ops
+            os.environ.setdefault('PYTHONHASHSEED', str(seed))
+            # Informational print (kept minimal to avoid noisy logs)
+            logger.info("[Experiment] Seed set to %s", seed)
         self.auction_item_specs = [
                         AuctionItemSpecification(name="male", item_type={"male"}),
                         AuctionItemSpecification(name="female", item_type={"female"})
@@ -42,7 +88,7 @@ class Experiment:
         self.second_price_auction = KthPriceAuction(2)
 
 
-    def setup_1(self, debug=False):
+    def setup_1(self):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -55,10 +101,8 @@ class Experiment:
                     self.campaigns[0] : 0,
                     self.campaigns[1] : 1
         })
-        if debug:
-            for c in campaigns:
-                pprint(c)
-                print()
+        for c in campaigns:
+            logger.debug("campaign: %s", c)
 
         num_items_per_timestep_min = 1
         num_items_per_timestep_max = 2
@@ -67,7 +111,7 @@ class Experiment:
         return env, auction_item_spec_ids
 
 
-    def setup_2(self, debug=False):
+    def setup_2(self):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -80,10 +124,8 @@ class Experiment:
                     self.campaigns[0] : 1,
                     self.campaigns[1] : 1
         })
-        if debug:
-            for c in campaigns:
-                pprint(c)
-                print()
+        for c in campaigns:
+            logger.debug("campaign: %s", c)
 
         num_items_per_timestep_min = 1
         num_items_per_timestep_max = 2
@@ -176,41 +218,79 @@ class Experiment:
         _, scale_states_func, _  = self.get_states_scaler_descaler(samples)
         actions_scaler, scale_actions_func, descale_actions_func = self.get_actions_scaler_descaler(samples)
         
-        # shape (num_of_nonzero_samples, state_size)
-        nonzero_samples = tf.boolean_mask(samples, tf.math.logical_not(tf.math.logical_and(samples[:,:,0] == 0, samples[:,:,1] == 0)))
-        avg_budget_per_reach = tf.reduce_mean(nonzero_samples[:,1] / nonzero_samples[:,0])
-        scaled_avg_bpr = actions_scaler.transform([[avg_budget_per_reach]])[0][0]
+        # shape (num_of_valid_samples, state_size)
+        # Use only samples with reach > 0 to avoid division-by-zero (inf) and NaNs.
+        reach = samples[:, :, 0]
+        valid_mask = reach > 0
+        valid_samples = tf.boolean_mask(samples, valid_mask)
+
+        def _mean_bpr():
+            return tf.reduce_mean(valid_samples[:, 1] / valid_samples[:, 0])
+
+        def _fallback_bpr():
+            # Sensible default if no valid samples exist
+            return tf.constant(1.0, dtype=samples.dtype)
+
+        num_valid = tf.reduce_sum(tf.cast(valid_mask, tf.int32))
+        avg_budget_per_reach = tf.cond(num_valid > 0, _mean_bpr, _fallback_bpr)
+
+        # MinMaxScaler expects a numeric Python/NumPy value
+        avg_bpr_float = float(avg_budget_per_reach.numpy())
+        scaled_avg_bpr = actions_scaler.transform([[avg_bpr_float]])[0][0]
         return scale_states_func, actions_scaler, scale_actions_func, descale_actions_func, scaled_avg_bpr
 
 
-    def run(self, env, agents, num_days, num_trajs, num_epochs, horizon_cutoff, vectorize=True, debug=False):
+    def run(self, env, agents, num_days, num_trajs, num_epochs, horizon_cutoff, vectorize=True):
         num_of_days = num_days # how long the game lasts
         num_of_trajs = num_trajs # how many times to run the game
         NUM_EPOCHS = num_epochs # how many batches of trajs to run
         horizon_cutoff = horizon_cutoff
-        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+        logger.info("days per traj: %s, trajs per epoch: %s, EPOCHS: %s", num_of_days, num_of_trajs, NUM_EPOCHS)
 
         env.vectorize = vectorize
         env.init(agents, num_of_days)
-        print("agent policies: {}".format([agent.policy for agent in env.agents]))
+        logger.info("agent policies: %s", [agent.policy for agent in env.agents])
 
         start = time.time()
+        # Rolling window (epoch means only) per agent for the last 50 epochs
+        last_50_epoch_means = {agent.name: [] for agent in env.agents}
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
-            avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
-                            np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
-            print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
+            # Debug flag removed; always rely on logger level for verbosity
+            train(env, num_of_trajs, horizon_cutoff)
+            # Per-epoch mean/std across trajectories for each agent
+            epoch_stats = []
+            for agent in env.agents:
+                last_trajs = agent.cumulative_rewards[-num_of_trajs:]
+                mean_epoch = float(np.mean(last_trajs)) if last_trajs.size > 0 else float("nan")
+                std_epoch = float(np.std(last_trajs)) if last_trajs.size > 0 else float("nan")
+                epoch_stats.append((agent.name, mean_epoch, std_epoch))
+                # Maintain rolling 50 means
+                l = last_50_epoch_means[agent.name]
+                l.append(mean_epoch)
+                if len(l) > 50:
+                    l.pop(0)
+            logger.info("epoch: %s, avg and std rwds: %s", i, epoch_stats)
 
-            if ((i+1) % 50) == 0:
-                avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
-                            np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
-                max_last_50_epochs = [(agent.name, np.max(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
-                print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
-                print("Max of last 50 epochs: {}".format(max_last_50_epochs))
+            if ((i + 1) % 50) == 0:
+                # Compute avg/std over the stored epoch means (not raw trajectories)
+                avg_and_std_last_50 = []
+                max_last_50 = []
+                for agent in env.agents:
+                    window = last_50_epoch_means[agent.name]
+                    if len(window) > 0:
+                        avg_ = float(np.mean(window))
+                        std_ = float(np.std(window))
+                        max_ = float(np.max(window))
+                    else:
+                        avg_ = std_ = max_ = float("nan")
+                    avg_and_std_last_50.append((agent.name, avg_, std_))
+                    max_last_50.append((agent.name, max_))
+                logger.info("Avg. of last 50 epochs: %s", avg_and_std_last_50)
+                logger.info("Max of last 50 epochs (epoch means): %s", max_last_50)
         
         end = time.time()
-        print("Took {} sec to train".format(end-start))
+        logger.info("Took %.2f sec to train", end-start)
 
     def exp_1(self, num_days, num_trajs, num_epochs, lr, debug=False):
         auction_item_specs = self.auction_item_specs
@@ -219,8 +299,9 @@ class Experiment:
         auction_item_spec_pmf = self.auction_item_spec_pmf
         campaign_pmf = self.campaign_pmf
         if debug:
+            from pprint import pprint as _pprint
             for c in campaigns:
-                pprint(c)
+                _pprint(c)
                 print()
 
         num_items_per_timestep_min = 1000
@@ -237,12 +318,12 @@ class Experiment:
         num_of_trajs = num_trajs # how many times to run the game
         NUM_EPOCHS = num_epochs # how many batches of trajs to run
         horizon_cutoff = 100
-        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS))
 
         # Vectorize is True
         env.vectorize = True
         env.init(agents, num_of_days)
-        states, actions, rewards = generate_trajectories(env, num_of_trajs, horizon_cutoff, debug=debug)
+        states, actions, rewards = generate_trajectories(env, num_of_trajs, horizon_cutoff)
         return states, actions, rewards
 
 
@@ -253,8 +334,9 @@ class Experiment:
         auction_item_spec_pmf = self.auction_item_spec_pmf
         campaign_pmf = self.campaign_pmf
         if debug:
+            from pprint import pprint as _pprint
             for c in campaigns:
-                pprint(c)
+                _pprint(c)
                 print()
 
         num_items_per_timestep_min = 1000
@@ -271,12 +353,12 @@ class Experiment:
         num_of_trajs = num_trajs # how many times to run the game
         NUM_EPOCHS = num_epochs # how many batches of trajs to run
         horizon_cutoff = 100
-        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS))
 
         # Vectorize is False
         env.vectorize = False
         env.init(agents, num_of_days)
-        states, actions, rewards = generate_trajectories(env, num_of_trajs, horizon_cutoff, debug=debug)
+        states, actions, rewards = generate_trajectories(env, num_of_trajs, horizon_cutoff)
         return states, actions, rewards
 
 
@@ -287,8 +369,9 @@ class Experiment:
         auction_item_spec_pmf = self.auction_item_spec_pmf
         campaign_pmf = self.campaign_pmf
         if debug:
+            from pprint import pprint as _pprint
             for c in campaigns:
-                pprint(c)
+                _pprint(c)
                 print()
 
         num_items_per_timestep_min = 2
@@ -305,11 +388,11 @@ class Experiment:
         num_of_trajs = num_trajs # how many times to run the game
         NUM_EPOCHS = num_epochs # how many batches of trajs to run
         horizon_cutoff = 100
-        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS))
 
         env.vectorize = True
         env.init(agents, num_of_days)
-        states, actions, rewards = generate_trajectories(env, num_of_trajs, horizon_cutoff, debug=debug)
+        states, actions, rewards = generate_trajectories(env, num_of_trajs, horizon_cutoff)
         return states, actions, rewards
 
 
@@ -326,8 +409,9 @@ class Experiment:
                     self.campaigns[1] : 1
         })
         if debug:
+            from pprint import pprint as _pprint
             for c in campaigns:
-                pprint(c)
+                _pprint(c)
                 print()
 
         num_items_per_timestep_min = 100
@@ -344,7 +428,7 @@ class Experiment:
         num_of_trajs = num_trajs # how many times to run the game
         NUM_EPOCHS = num_epochs # how many batches of trajs to run
         horizon_cutoff = 100
-        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS))
 
         env.vectorize = True
         env.init(agents, num_of_days)
@@ -383,7 +467,7 @@ class Experiment:
         end = time.time()
 
         avg_and_std_rwds_last_50_epochs = [(agent.name, np.mean(agent.cumulative_rewards[-50*num_of_trajs:]), 
-                            np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
+                    np.std(agent.cumulative_rewards[-50*num_of_trajs:])) for agent in env.agents]
         print("Avg. of last 50 epochs: {}".format(avg_and_std_rwds_last_50_epochs))
         print("Took {} sec to train".format(end-start))
 
@@ -403,8 +487,9 @@ class Experiment:
                     self.campaigns[1] : 1
         })
         if debug:
+            from pprint import pprint as _pprint
             for c in campaigns:
-                pprint(c)
+                _pprint(c)
                 print()
 
         num_items_per_timestep_min = 100
@@ -420,7 +505,7 @@ class Experiment:
         num_of_trajs = num_trajs # how many times to run the game
         NUM_EPOCHS = num_epochs # how many batches of trajs to run
         horizon_cutoff = 100
-        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS)) 
+        print("days per traj: {}, trajs per epoch: {}, EPOCHS: {}".format(num_of_days, num_of_trajs, NUM_EPOCHS))
 
         env.vectorize = True
         env.init(agents, num_of_days)
@@ -477,7 +562,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -502,7 +587,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -527,7 +612,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -552,7 +637,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -577,7 +662,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -602,7 +687,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -627,7 +712,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -652,7 +737,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -677,7 +762,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
     
 
@@ -702,7 +787,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
     
 
@@ -727,7 +812,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -752,7 +837,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
       
@@ -778,7 +863,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
                   
         
@@ -804,7 +889,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
       
@@ -830,7 +915,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -856,7 +941,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -882,7 +967,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
                       
         
@@ -933,7 +1018,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -995,7 +1080,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1057,7 +1142,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1119,7 +1204,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1181,7 +1266,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1243,7 +1328,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1305,7 +1390,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1367,7 +1452,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1429,7 +1514,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1491,7 +1576,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1553,7 +1638,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1615,7 +1700,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1677,7 +1762,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1739,7 +1824,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1801,7 +1886,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1863,7 +1948,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1925,7 +2010,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -1987,7 +2072,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -2049,7 +2134,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -2111,7 +2196,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -2173,7 +2258,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -2235,7 +2320,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -2272,7 +2357,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
     
@@ -2298,7 +2383,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2324,7 +2409,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2350,7 +2435,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3912,6 +3997,8 @@ class Experiment:
 
 
 if __name__ == '__main__':
+    # CLI usage (legacy): python one_camp_n_days.py exp num_days num_trajs num_epochs lr [debug] [seed]
+    # Added optional seed argument at position 7.
     exp = sys.argv[1]
     num_days = int(sys.argv[2])
     num_trajs = int(sys.argv[3])
@@ -3923,9 +4010,15 @@ if __name__ == '__main__':
             debug = True
         else:
             debug = False
-    except:
+    except Exception:
         debug = False
-    experiment = Experiment()
+    # Optional seed (position 7)
+    seed = None
+    try:
+        seed = int(sys.argv[7])
+    except Exception:
+        seed = None
+    experiment = Experiment(seed=seed)
     function_mappings = {
         'exp_1': experiment.exp_1,
         'exp_2': experiment.exp_2,
@@ -4045,11 +4138,9 @@ if __name__ == '__main__':
     states, actions, rewards = exp_func(num_days, num_trajs, num_epochs, lr, debug=debug)
     if debug:
         if states is not None:
-            print("states shape: {}".format(states.shape))
-            print("states:\n{}".format(states))
-            print()
+            logger.debug("states shape: %s", states.shape)
+            logger.debug("states:\n%s", states)
         if actions is not None:
-            print("actions:\n{}".format(actions))
-            print()
+            logger.debug("actions:\n%s", actions)
         if rewards is not None:
-            print("rewards:\n{}".format(rewards))
+            logger.debug("rewards:\n%s", rewards)

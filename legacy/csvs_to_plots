@@ -1,0 +1,16 @@
+#!/bin/bash
+
+input_dir="$1"
+output_dir="$2"
+plot_var="$3"
+
+if [ $# -lt 3 ]; then
+	echo "Not enough arguments provided"
+	echo 'Usage: ' "`basename "$0"`" '<input dir> <output dir> <plot var>'
+	exit 1
+fi
+
+echo "plotting method_1"
+python -u -m legacy.plot_results method_1 "${input_dir}" "${output_dir}" "${plot_var}"
+echo "plotting method_2"
+python -u -m legacy.plot_results method_2 "${input_dir}" "${output_dir}" "${plot_var}"

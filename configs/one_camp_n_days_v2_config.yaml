@@ -1,0 +1,17 @@
+num_days: 1            # days per trajectory
+num_trajs: 200         # trajectories per epoch
+num_epochs: 10        # training epochs
+setup: setup_1         # maps to Experiment.setup_1()
+seed: 123              # optional; remove for stochastic run
+label: base_config       # optional, for easier filtering later
+agents:
+    - name: learner
+      policy: REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous
+      params:
+          learning_rate: 5e-6
+          shape_reward: false
+    - name: baseline
+      policy: FixedBidPolicy
+      params:
+          bid_per_item: 5
+          total_limit: 5

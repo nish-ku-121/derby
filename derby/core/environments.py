@@ -8,26 +8,31 @@ from derby.core.ad_structures import Campaign
 from derby.core.states import State, CampaignBidderState
 from derby.core.markets import OneCampaignMarket, SequentialAuctionMarket
 from derby.core.utils import flatten_2d
-# cannot import this as it creates a circular import dependency
-# environments -imports-> agents -imports-> policies -imports-> environments
-# from derby.core.agents import Agent
 import os
 import tensorflow as tf
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Killing optional CPU driver warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
 
-def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, debug=False, update_policies_after_every_step=False):
+_warned_legacy_kw = False
+
+def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, update_policies_after_every_step=False, **_ignored_legacy_kwargs):
+    global _warned_legacy_kw
+    if _ignored_legacy_kwargs and not _warned_legacy_kw:
+        logger.warning("Deprecated experiment kwarg(s) ignored: %s (legacy debug plumbing removed; set logging level instead)", list(_ignored_legacy_kwargs.keys()))
+        _warned_legacy_kw = True
     with tf.GradientTape() as tape:
-        states, actions, rewards = generate_trajectories(env, num_of_trajs, 
-                                                                horizon_cutoff,
-                                                                scale_states_func=scale_states_func,
-                                                                debug=debug,
-                                                                update_policies_after_every_step=update_policies_after_every_step)
+        states, actions, rewards = generate_trajectories(env, num_of_trajs,
+                                                         horizon_cutoff,
+                                                         scale_states_func=scale_states_func,
+                                                         update_policies_after_every_step=update_policies_after_every_step)
 # # DEBUG
-#         print("actions:\n{}".format(actions))
+    # logger.debug("actions:\n%s", actions)
 # #
         # tuple (agent, states for agent, actions for agent, rewards for agent, agent's policy loss)
         # for evey agent in env.agents.
@@ -40,16 +45,16 @@ def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, debug=False
             sarl_tup = (agent, agent_states, agent_actions, agent_rewards, agent_loss)
             sarl_per_agent.append(sarl_tup)
 
-        if debug:
-            print("losses:")
-            print([agent_loss for _, _, _, _, agent_loss in sarl_per_agent])
+        # Always emit at debug level (log level controls visibility)
+        logger.debug("losses:")
+        logger.debug("%s", [agent_loss for _, _, _, _, agent_loss in sarl_per_agent])
     
     for ag, ag_states, ag_actions, ag_rewards, ag_loss in sarl_per_agent:
         ag.update_policy(ag_states, ag_actions, ag_rewards, ag_loss, tf_grad_tape=tape)
         ag.update_stats(ag_states, ag_actions, ag_rewards)
 
-def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=None, 
-                            debug=False, update_policies_after_every_step=False):
+def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=None,
+                          update_policies_after_every_step=False, **_ignored_legacy_kwargs):
     # A function responsible for scaling/normalizing each agent state
     # in a list of agent states. By default, do no scaling.
     # Input to scale_states_func will be an array of shape 
@@ -75,11 +80,9 @@ def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=N
         if traj_i_states is None:
             traj_i_states = all_agents_states
        
-        if debug:
-            print("=== Traj {} ===".format(i))
-            print()
-            print("states {}, shape {}".format(0, all_agents_states.shape))
-            print(all_agents_states)
+        logger.debug("=== Traj %s ===", i)
+        logger.debug("states %s, shape %s", 0, all_agents_states.shape)
+        logger.debug("%s", all_agents_states)
 
         for j in range(horizon_cutoff):
             actions = []
@@ -120,18 +123,16 @@ def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=N
                 else:
                     traj_i_actions = [ np.concatenate((traj_i_actions[i], actions[i]), axis=1) for i in range(len(actions)) ]
                     traj_i_rewards = np.concatenate((traj_i_rewards, rewards), axis=1)
-            if debug:
-                print("actions {}".format(j))
-                print(actions)
-                print("rewards {}, shape {}".format(j, rewards.shape))
-                print(rewards)
-                print("states {}, shape {}".format(j+1, all_agents_states.shape))
-                print(all_agents_states)
-                print("Done? {}".format(done))
+            logger.debug("actions %s", j)
+            logger.debug("%s", actions)
+            logger.debug("rewards %s, shape %s", j, rewards.shape)
+            logger.debug("%s", rewards)
+            logger.debug("states %s, shape %s", j+1, all_agents_states.shape)
+            logger.debug("%s", all_agents_states)
+            logger.debug("Done? %s", done)
             if done:
                 break 
-        if debug:
-            print()
+        logger.debug("")
 
         # Update batch
         if env.vectorize:
@@ -339,8 +340,31 @@ class MarketEnv(AbstractEnvironment):
             for j in range(len(actions[i])):
                 bid_j_of_agent_i = actions[i][j]
                 bidder = agents[i]
-                auction_item_spec_id = bid_j_of_agent_i[0]
-                auction_item_spec = auction_item_specs_by_id[auction_item_spec_id]
+                # The first column is auction_item_spec_id; ensure it's an int key
+                # because some policies produce float/NumPy scalar IDs (e.g., 1.0),
+                # which can miss int keys in dict lookups due to hashing differences.
+                try:
+                    auction_item_spec_id = int(bid_j_of_agent_i[0])
+                except Exception:
+                    # Fallback: attempt to extract Python scalar first, then cast
+                    try:
+                        auction_item_spec_id = int(float(bid_j_of_agent_i[0]))
+                    except Exception:
+                        raise KeyError(f"Invalid auction_item_spec_id type: {type(bid_j_of_agent_i[0])} value={bid_j_of_agent_i[0]}")
+
+                try:
+                    auction_item_spec = auction_item_specs_by_id[auction_item_spec_id]
+                except KeyError as e:
+                    # Fallback: align by subaction index if ID is unknown.
+                    # Many policies emit subactions in the same sorted order as auction_item_spec_ids.
+                    # If the provided ID isn't recognized (e.g., due to cross-run UID drift),
+                    # map j-th subaction to the j-th available spec ID deterministically.
+                    available = sorted(list(auction_item_specs_by_id.keys()))
+                    if 0 <= j < len(available):
+                        fallback_id = available[j]
+                        auction_item_spec = auction_item_specs_by_id[fallback_id]
+                    else:
+                        raise KeyError(f"Unknown auction_item_spec_id {auction_item_spec_id}; available IDs: {available}") from e
                 bid_obj = Bid.from_vector(bid_j_of_agent_i, bidder, auction_item_spec)
                 agent_i_bids.append(bid_obj)
             bids.append(agent_i_bids)

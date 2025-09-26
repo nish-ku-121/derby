@@ -20,13 +20,18 @@ RUN pip install --no-cache-dir "poetry==$POETRY_VERSION"
 # Set workdir to /app
 WORKDIR /app
 
-# Copy only pyproject.toml and poetry.lock first for caching
+# Copy only pyproject files first to leverage Docker layer caching for deps
 COPY pyproject.toml poetry.lock* ./
 
-# Install dependencies (no dev by default)
-RUN poetry install --no-root --no-interaction --no-ansi
+# Copy the package directory so Poetry can install the project (previous error
+# came from not having the 'derby' directory present during install)
+COPY derby ./derby
 
-# Copy the rest of the code
+# Install dependencies AND the root package (harmless for dev; live source
+# mounted at runtime will still override installed copy)
+RUN poetry install --no-interaction --no-ansi --with dev
+
+# Copy the remainder of the repo (configs, scripts, notebooks, etc.)
 COPY . .
 
 # Default command

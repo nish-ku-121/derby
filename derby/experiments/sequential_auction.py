@@ -1,5 +1,6 @@
 import unittest
 import numpy as np
+import logging
 from derby.core.basic_structures import AuctionItemSpecification, AuctionItem
 from derby.core.ad_structures import Campaign
 from derby.core.auctions import KthPriceAuction
@@ -8,6 +9,8 @@ from derby.core.environments import generate_trajectories, SequentialAuctionEnv
 from derby.core.agents import Agent
 from derby.core.policies import DummyPolicy1, DummyPolicy2
 import pprint
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -29,7 +32,7 @@ class Experiment:
                     self.campaigns[1] : 1
         })
 
-    def exp_1(self, debug=False):
+    def exp_1(self):
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -41,10 +44,9 @@ class Experiment:
                 AuctionItem(auction_item_specs[0]),
                 AuctionItem(auction_item_specs[1])
         ]
-        if debug:
-            for c in campaigns:
-                pprint.pprint(c)
-                print()
+        # Always log campaign details at debug level; visibility controlled by logger level.
+        for c in campaigns:
+            logger.debug("campaign: %s", c)
 
         num_of_items_per_timestep = 1
         env = SequentialAuctionEnv(auction, all_auction_items, campaign_pmf, num_of_items_per_timestep)
@@ -59,17 +61,21 @@ class Experiment:
 
         env.vectorize = True
         env.init(agents, num_of_days)
-        trajs, rewards = generate_trajectories(env, agents, num_of_trajs, horizon_cutoff, debug=debug)
+        # Pass through legacy debug flag only if generate_trajectories still expects it; otherwise omit.
+        # Legacy debug flag removed; always rely on logger level for verbosity.
+        try:
+            trajs, rewards = generate_trajectories(env, agents, num_of_trajs, horizon_cutoff)
+        except TypeError:
+            trajs, rewards = generate_trajectories(env, agents, num_of_trajs, horizon_cutoff)
         return trajs, rewards
 
 
 if __name__ == '__main__':
     experiment = Experiment()
-    trajs, rewards = experiment.exp_1(debug=True)
+    trajs, rewards = experiment.exp_1()
     if trajs is not None:
-        print("trajs shape: {}".format(trajs.shape))
-        print(trajs)
-        print()
+        logger.debug("trajs shape: %s", trajs.shape)
+        logger.debug("%s", trajs)
     if rewards is not None:
-        print("rewards shape: {}".format(rewards.shape))
-        print(rewards)
+        logger.debug("rewards shape: %s", rewards.shape)
+        logger.debug("%s", rewards)

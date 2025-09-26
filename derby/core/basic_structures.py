@@ -1,5 +1,9 @@
 from typing import Set, List, Dict, Any
+import typing
 import itertools
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -100,15 +104,18 @@ class Bid:
         # A bid cannot be negative
         try:
             assert self.bid_per_item >= 0
-        except:
-            print("bpi: {}".format(self.bid_per_item))
+        except AssertionError:
+            logger.debug("Invalid negative bid_per_item encountered: %s", self.bid_per_item)
         # A limit cannot be non-positive 
         # TODO: why? ask enrique
         # changed to >=0 instead of >0.
         assert self.total_limit >= 0
         # A bid cannot be bigger than its limit, since in the worst case a bidder could end up paying a price arbitrarily close to its bid.
         if not (self.bid_per_item <= self.total_limit):
-            print(f"Bid assertion failed: bid_per_item={self.bid_per_item}, total_limit={self.total_limit}, bidder={self.bidder}, auction_item_spec={self.auction_item_spec}")
+            logger.debug(
+                "Bid assertion failed: bid_per_item=%s, total_limit=%s, bidder=%s, auction_item_spec=%s",
+                self.bid_per_item, self.total_limit, self.bidder, self.auction_item_spec
+            )
         assert self.bid_per_item <= self.total_limit
 
     def __eq__(self, other):

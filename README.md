@@ -22,6 +22,12 @@ for i in range(num_of_trajs):
 
 ---
 
+## Documentation quick links
+
+- Policies overview: see docs/Policies.md for a grouped rundown of all policies in `derby/core/policies.py`.
+
+---
+
 ## Game Description
 
 A *market* can be thought of as a stateful, repeated auction:
@@ -49,16 +55,160 @@ This project is designed to run using Docker. You only need Docker installed—n
 
 ## Running Experiments
 
-To run an experiment (for example, the `one_camp_n_days` experiment), use:
-```bash
-make docker-run ARGS="poetry run python -u -m derby.experiments.one_camp_n_days <experiment_name> <num_days> <num_trajs> <num_epochs> <learning_rate>"
-```
-Replace the arguments as needed for your experiment.
+The Makefile's `docker-run` target automatically executes commands via Poetry inside the container, so you can pass plain `python` commands in `ARGS`.
 
-e.g.
+You can invoke an experiment script in several equivalent ways (pick whichever you find clearest):
+
+1. Module form (preferred; resolves relative imports robustly)
+    ```bash
+    make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days <experiment_name> <num_days> <num_trajs> <num_epochs> <learning_rate>"
+    ```
+2. File path form
+    ```bash
+    make docker-run ARGS="python -u derby/experiments/one_camp_n_days.py <experiment_name> <num_days> <num_trajs> <num_epochs> <learning_rate>"
+    ```
+3. Open an interactive shell then run repeatedly (good for quick loops)
+    ```bash
+    make docker-shell
+    # Now inside container
+    poetry run python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7
+    ```
+4. With explicit environment variables (example: restrict TensorFlow threading)
+    ```bash
+    make docker-run ARGS="TF_NUM_INTEROP_THREADS=1 TF_NUM_INTRAOP_THREADS=1 python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
+    ```
+5. Using a short alias variable for readability (shell feature)
+    ```bash
+    EXP_ARGS="exp_1000 1 200 100 5e-7" ; make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days $EXP_ARGS"
+    ```
+
+Example (module form):
 ```bash
-make docker-run ARGS="poetry run python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
+make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
 ```
+
+### Modern YAML-driven runner (v2)
+
+For new work, prefer the YAML-based runner `derby.experiments.one_camp_n_days_v2`. It consumes a single config dict from a YAML file and logs per-epoch metrics to Parquet.
+
+CLI usage:
+```bash
+make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days_v2 \
+    --config configs/one_camp_n_days_v2_config.yaml \
+    -o results/test_run \
+    --log-level INFO"
+```
+
+Key points:
+- Seed (if you want reproducibility) must be specified ONLY inside the YAML as `seed:`. There is no CLI override.
+- Output directory (`-o/--output-dir`) is optional; if provided, a Parquet file `epoch_agg__<run_id>.parquet` is written there containing one row per (epoch, agent).
+- Each row includes: `run_id`, `config_hash`, `seed`, `label` (if provided), per-agent mean/std reward, and core config fields.
+- `config_hash` is a SHA256 of the config with non-semantic keys (`label`, `logging`) removed; changing the seed changes the hash.
+- Baseline (non-TensorFlow) policies receive raw states/actions; only TensorFlow policies are scaled/normalized.
+
+Minimal YAML example (`configs/one_camp_n_days_v2_config.yaml`):
+```yaml
+num_days: 1            # days per trajectory
+num_trajs: 200         # trajectories per epoch
+num_epochs: 100        # training epochs
+setup: setup_1         # maps to Experiment.setup_1()
+seed: 123              # optional; remove for stochastic run
+label: tiny-demo       # optional, for easier filtering later
+agents:
+    - name: learner
+        policy: REINFORCE_Baseline_Gaussian_v3_1_MarketEnv_Continuous
+        params:
+            learning_rate: 5e-7
+    - name: baseline
+        policy: FixedBidPolicy
+        params:
+            bid_per_item: 5
+            total_limit: 5
+```
+
+Python / notebook usage (public API):
+```python
+import yaml
+from derby.experiments.one_camp_n_days_v2 import run_experiment_from_config
+
+with open("configs/one_camp_n_days_v2_config.yaml", "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+run_id = run_experiment_from_config(
+    cfg,
+    output_dir_override="results/notebook_demo",  # writes Parquet here if provided
+    log_level="DEBUG",  # or "INFO" / "NONE" etc.
+)
+print("Run ID:", run_id)
+# Parquet path: results/notebook_demo/epoch_agg__<run_id>.parquet
+```
+
+Tip: If you want many variants, use the parallel sweeper below instead of hand-editing multiple YAMLs.
+
+---
+
+## Parallel sweeps (recommended)
+
+Use the process-based sweeper to run many configurations in parallel and collect results:
+
+```bash
+make docker-run ARGS='python -u -m pipeline.parallel_sweep \
+    --base-yaml configs/base_sweep.yaml \
+    --grid-yaml configs/grid_sweep_1.yaml \
+    --output-dir results/sweep \
+    --log-level INFO \
+    --tf-intra 1 --tf-inter 1'
+```
+
+Key ideas:
+- Base config (`configs/base_sweep.yaml`): a single config dict accepted by the simplified runner.
+- Grid config (`configs/grid_sweep.yaml`): a mapping of dotted-keys to lists, expanded into the Cartesian product. Example keys: `num_epochs`, `agents.0.params.learning_rate`.
+- One process per config variant (default workers = all CPU cores). TensorFlow and BLAS threads per process can be controlled with `--tf-intra` and `--tf-inter`.
+
+Useful flags:
+- `--base-yaml`, `--grid-yaml`: YAML files for the base config and parameter grid.
+- `--output-dir`: base directory for outputs. A timestamped directory `sweep_<UTC_TIMESTAMP>` is created per run. Parquet files are written under `parquet/`. A stable `parallel_results.jsonl` and a timestamped copy are both produced.
+- `--max-workers`: cap number of worker processes (default = all CPUs).
+- `--tf-intra`, `--tf-inter`: TensorFlow intra/inter-op thread counts per process (defaults 1/1 to avoid oversubscription).
+- `--start-method`: multiprocessing start method (default `spawn`, safest for TensorFlow).
+- `--log-level`: controls ONLY the sweep/orchestrator logs (DEBUG/INFO/WARNING/ERROR or suppression aliases like NONE/OFF/QUIET). Inner experiments use their own defaults.
+
+Memory advisory: After each sweep a `memory_advisory.txt` is written showing observed mean/median/p95/max end RSS and peak RSS plus recommended aggressive & conservative worker counts. Tuning constants:
+- `DEFAULT_MEMORY_SAFETY_FACTOR = 0.85`
+- `DEFAULT_MEMORY_RESERVE_MB = 1024`
+
+See `docs/MemoryAdvisory.md` for full explanation of these fields and how to use them when scaling concurrency.
+
+Behavior and logs:
+- Per-run labels are formed automatically as `<base>-i<index>` where `<base>` is the first non-empty of: (variant `label` after overrides) → (base YAML `label`) → (grid filename stem). This preserves user intent while ensuring uniqueness per variant.
+- The sweeper prints a concise line when each run starts, including label, policy, learning rate, epochs, and trajs.
+- Inner experiments are run with their own default logging (no per-run override flag). To reduce inner noise, configure logging within the experiment config itself (or post-filter logs). The sweep `--log-level` only affects the orchestration layer.
+- At the end, the sweeper reports wall time, aggregate CPU time, speedup, and parallel efficiency.
+
+Outputs:
+- Parquet files per run: `<output-dir>/parquet/epoch_agg__<uuid>.parquet` (ignored by git).
+- JSONL summary: `<output-dir>/parallel_results.jsonl` plus a timestamped copy `parallel_results_YYYYMMDD-HHMMSS.jsonl`.
+
+---
+
+## Repository layout (updated)
+
+- `derby/` — core library (environments, agents, auctions, markets, policies, utils)
+- `pipeline/` — modern, process-based runners and tools
+    - `parallel_sweep.py` — main entrypoint for running config sweeps in parallel (writes Parquet + JSONL outputs under a single output directory)
+- `utils/` — reusable helpers for analysis and plotting
+    - `epoch_agg_loader.py` — list/load per-epoch Parquet files; basic policy summaries
+    - `plot_utils.py` — load/filter/extract_fields/plot helpers for notebooks
+- `legacy/` — original CSV-based helpers and plotting for older experiments
+    - `plot_results.py`, `logs_to_csvs`, `csvs_to_plots`, `logs_to_plots`, `log_to_csv`
+- `configs/` — experiment/sweep YAML configuration (e.g., `base_sweep.yaml`, `grid_sweep_1.yaml`)
+- `notebooks/` — Jupyter notebooks for exploration/visualization
+- `scripts/` — convenience scripts (e.g., running grid sweeps)
+- `Dockerfile`, `Makefile`, `pyproject.toml`, `poetry.lock`
+
+Notes:
+- The repository does not track `results/` in git; it's reserved for run outputs (Parquet, JSONL, etc.).
+- Update any local scripts to import from `utils.*` or execute from `pipeline/*` instead of `results.*`.
 
 ## Rebuilding the Poetry Lock File
 

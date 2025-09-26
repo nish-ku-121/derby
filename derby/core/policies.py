@@ -1335,9 +1335,9 @@ class REINFORCE_Gaussian_v3_1_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
         losses = neg_logs * advantage
         total_loss = tf.reduce_sum(losses)
 # DEBUG
-        print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
-        print("avg. advtg:\n{}".format(tf.reduce_mean(advantage, axis=0)))
-        print("tot loss: {}".format(total_loss))
+        # print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
+        # print("avg. advtg:\n{}".format(tf.reduce_mean(advantage, axis=0)))
+        # print("tot loss: {}".format(total_loss))
 #
         return total_loss
 
@@ -1801,16 +1801,16 @@ class REINFORCE_Tabu_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Mode
         tabu_neg_logs = tf.clip_by_value(tabu_neg_logs, -1e9, 1e9)
         tabu_loss = tf.reduce_sum(tf.where(cuml_disc_rwds == 0, tf.reduce_sum(tabu_neg_logs, axis=1), 0.), axis=0)
 # DEBUG
-        # # print("weights:\n{}".format(self.trainable_variables))
-        # # print("actions:\n{}".format(actions))
-        print("resample_count: {}".format(self.resample_count))
-        print("avg. action_distr loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
-        print("avg. tabu_distr loc:\n{}".format(tf.reduce_mean(tabu_distr.loc, axis=0)))
-        print("avg. tabu_distr scale:\n{}".format(tf.reduce_mean(tabu_distr.scale, axis=0)))
-        # # print("cuml_disc_rwds:\n{}".format(cuml_disc_rwds))
-        # # print("tabu_neg_logs:\n{}".format(tabu_neg_logs))
-        # print("total_loss: {}".format(total_loss))
-        print("tabu_loss: {}".format(tabu_loss))
+        # # # print("weights:\n{}".format(self.trainable_variables))
+        # # # print("actions:\n{}".format(actions))
+        # print("resample_count: {}".format(self.resample_count))
+        # print("avg. action_distr loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
+        # print("avg. tabu_distr loc:\n{}".format(tf.reduce_mean(tabu_distr.loc, axis=0)))
+        # print("avg. tabu_distr scale:\n{}".format(tf.reduce_mean(tabu_distr.scale, axis=0)))
+        # # # print("cuml_disc_rwds:\n{}".format(cuml_disc_rwds))
+        # # # print("tabu_neg_logs:\n{}".format(tabu_neg_logs))
+        # # print("total_loss: {}".format(total_loss))
+        # print("tabu_loss: {}".format(tabu_loss))
 #
         return (1.0*total_loss) + (10.0*tabu_loss)
 
@@ -2096,17 +2096,17 @@ class REINFORCE_Tabu_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.M
         tabu_neg_logs = tf.clip_by_value(tabu_neg_logs, -1e9, 1e9)
         tabu_loss = tf.reduce_sum(tf.where(cuml_disc_rwds == 0, tf.reduce_sum(tabu_neg_logs, axis=1), 0.), axis=0)
 # DEBUG
-        # # print("weights:\n{}".format(self.trainable_variables))
-        # # print("actions:\n{}".format(actions))
-        print("resample_count: {}".format(self.resample_count))
-        print("avg. action_distr loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
-        print("avg. tabu_distr low:\n{}".format(tf.reduce_mean(tabu_distr.low, axis=0)))
-        print("avg. tabu_distr peak:\n{}".format(tf.reduce_mean(tabu_distr.peak, axis=0)))
-        print("avg. tabu_distr high:\n{}".format(tf.reduce_mean(tabu_distr.high, axis=0)))
-        # # print("cuml_disc_rwds:\n{}".format(cuml_disc_rwds))
-        # # print("tabu_neg_logs:\n{}".format(tabu_neg_logs))
-        # print("total_loss: {}".format(total_loss))
-        print("tabu_loss: {}".format(tabu_loss))
+        # # # print("weights:\n{}".format(self.trainable_variables))
+        # # # print("actions:\n{}".format(actions))
+        # print("resample_count: {}".format(self.resample_count))
+        # print("avg. action_distr loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
+        # print("avg. tabu_distr low:\n{}".format(tf.reduce_mean(tabu_distr.low, axis=0)))
+        # print("avg. tabu_distr peak:\n{}".format(tf.reduce_mean(tabu_distr.peak, axis=0)))
+        # print("avg. tabu_distr high:\n{}".format(tf.reduce_mean(tabu_distr.high, axis=0)))
+        # # # print("cuml_disc_rwds:\n{}".format(cuml_disc_rwds))
+        # # # print("tabu_neg_logs:\n{}".format(tabu_neg_logs))
+        # # print("total_loss: {}".format(total_loss))
+        # print("tabu_loss: {}".format(tabu_loss))
 #
         return (1.0*total_loss) + (10.0*tabu_loss)
 
@@ -2399,18 +2399,18 @@ class REINFORCE_Tabu_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.M
         tabu_losses = tabu_neg_logs * advantage
         tabu_loss = tf.reduce_sum(tf.where(cuml_disc_rwds > 0, tf.reduce_sum(tabu_losses, axis=1), 0.), axis=0)
 # DEBUG
-        # # print("weights:\n{}".format(self.trainable_variables))
-        # # print("actions:\n{}".format(actions))
-        print("iter_epsilon: {}".format(self.calc_iter_epsilon()))
-        print("sample_from_tabu_count: {}".format(self.sample_from_tabu_count))
-        print("avg. action_distr loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
-        print("avg. action_distr scale:\n{}".format(tf.reduce_mean(action_distr.scale, axis=0)))
-        print("avg. tabu_distr loc:\n{}".format(tf.reduce_mean(tabu_distr.loc, axis=0)))
-        print("avg. tabu_distr scale:\n{}".format(tf.reduce_mean(tabu_distr.scale, axis=0)))
-        # # print("cuml_disc_rwds:\n{}".format(cuml_disc_rwds))
-        # # print("tabu_neg_logs:\n{}".format(tabu_neg_logs))
-        print("policy_loss: {}".format(policy_loss))
-        print("tabu_loss: {}".format(tabu_loss))
+        # # # print("weights:\n{}".format(self.trainable_variables))
+        # # # print("actions:\n{}".format(actions))
+        # print("iter_epsilon: {}".format(self.calc_iter_epsilon()))
+        # print("sample_from_tabu_count: {}".format(self.sample_from_tabu_count))
+        # print("avg. action_distr loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
+        # print("avg. action_distr scale:\n{}".format(tf.reduce_mean(action_distr.scale, axis=0)))
+        # print("avg. tabu_distr loc:\n{}".format(tf.reduce_mean(tabu_distr.loc, axis=0)))
+        # print("avg. tabu_distr scale:\n{}".format(tf.reduce_mean(tabu_distr.scale, axis=0)))
+        # # # print("cuml_disc_rwds:\n{}".format(cuml_disc_rwds))
+        # # # print("tabu_neg_logs:\n{}".format(tabu_neg_logs))
+        # print("policy_loss: {}".format(policy_loss))
+        # print("tabu_loss: {}".format(tabu_loss))
 #
         return (1.0*policy_loss) + (0.8*tabu_loss)
 
@@ -4225,9 +4225,9 @@ class REINFORCE_Baseline_LogNormal_v3_1_MarketEnv_Continuous(AbstractPolicy, tf.
         critic_loss = tf.reduce_sum((advantage)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
 # DEBUG
-        print("avg. action:\n{}".format(tf.reduce_mean(actions, axis=0)))
-        print("avg. loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
-        print("avg. scale:\n{}".format(tf.reduce_mean(action_distr.scale, axis=0)))
+        # print("avg. action:\n{}".format(tf.reduce_mean(actions, axis=0)))
+        # print("avg. loc:\n{}".format(tf.reduce_mean(action_distr.loc, axis=0)))
+        # print("avg. scale:\n{}".format(tf.reduce_mean(action_distr.scale, axis=0)))
 #
         return total_loss
 
@@ -4639,8 +4639,8 @@ class AC_TD_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         critic_loss = tf.reduce_sum((targets - baseline)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
 # DEBUG
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
 #
         return total_loss
 
@@ -4857,8 +4857,8 @@ class AC_TD_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         critic_loss = tf.reduce_sum((targets - baseline)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
 # DEBUG
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
 #
         return total_loss
 
@@ -5086,8 +5086,8 @@ class AC_TD_Gaussian_v3_1_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         critic_loss = tf.reduce_sum((targets - baseline)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
 # DEBUG
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
 #
         return total_loss
 
@@ -5304,8 +5304,8 @@ class AC_TD_Gaussian_v4_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         critic_loss = tf.reduce_sum((targets - baseline)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
 # DEBUG
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
 #
         return total_loss
 
@@ -5995,8 +5995,8 @@ class AC_Q_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 #             # # print("subaction_dists_vals:\n{}".format(subaction_dists_vals))
 #             # # print("neg_logs:\n{}".format(neg_logs))
 #             print("avg. loss:\n{}".format(tf.reduce_mean(losses, axis=0)))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
 # #
         return total_loss
 
@@ -6221,8 +6221,8 @@ class AC_Q_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         critic_lr_mult = 1e2
         total_loss = (1.0*actor_loss) + (critic_lr_mult*critic_loss)
 # DEBUG
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
 #
         return total_loss
 
@@ -6447,8 +6447,8 @@ class AC_Q_Gaussian_v4_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         critic_lr_mult = 1e2
         total_loss = (1.0*actor_loss) + (critic_lr_mult*critic_loss)
 # DEBUG
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
 #
         return total_loss
 
@@ -6694,11 +6694,11 @@ class AC_Q_Baseline_V_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.
         baseline_loss = tf.reduce_sum((discounted_rewards - baseline)**2)
         total_loss = (1.0*actor_loss) + (1.0*critic_loss) + (1.0*baseline_loss)
 # DEBUG
-        print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
-        print("avg. advtg:\n{}".format(tf.reduce_mean(advantage, axis=0)))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
-        print("baseline_loss: {}".format(baseline_loss))
+        # print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
+        # print("avg. advtg:\n{}".format(tf.reduce_mean(advantage, axis=0)))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
+        # print("baseline_loss: {}".format(baseline_loss))
 #
         return total_loss
 
@@ -7337,8 +7337,8 @@ class AC_Q_Fourier_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model)
 #             # # print("subaction_dists_vals:\n{}".format(subaction_dists_vals))
 #             # # print("neg_logs:\n{}".format(neg_logs))
 #             print("avg. loss:\n{}".format(tf.reduce_mean(losses, axis=0)))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
 # #
         return total_loss
 
@@ -7973,8 +7973,8 @@ class AC_SARSA_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
         critic_loss = tf.reduce_sum((target - q_state_values)**2)
         total_loss = (1.0*actor_loss) + (0.5*critic_loss)
 # DEBUG
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
 #
         return total_loss
 
@@ -8697,10 +8697,10 @@ class AC_SARSA_Baseline_V_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.ke
         # print("avg. advtg:\n{}".format(tf.reduce_mean(advantage, axis=0)))
 #
 # DEBUG
-        print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
-        print("baseline_loss: {}".format(baseline_loss))
+        # print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
+        # print("baseline_loss: {}".format(baseline_loss))
 #
         return total_loss
 
@@ -8958,10 +8958,10 @@ class AC_SARSA_Baseline_V_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.ke
         baseline_loss = tf.reduce_sum((discounted_rewards - baseline)**2)
         total_loss = (1.0*actor_loss) + (1.0*critic_loss) + (1.0*baseline_loss)
 # DEBUG
-        print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
-        print("baseline_loss: {}".format(baseline_loss))
+        # print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
+        # print("baseline_loss: {}".format(baseline_loss))
 #
         return total_loss
 
@@ -9230,10 +9230,10 @@ class AC_SARSA_Baseline_V_Gaussian_v3_1_MarketEnv_Continuous(AbstractPolicy, tf.
         baseline_loss = tf.reduce_sum((discounted_rewards - baseline)**2)
         total_loss = (1.0*actor_loss) + (1.0*critic_loss) + (1.0*baseline_loss)
 # DEBUG
-        print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
-        print("baseline_loss: {}".format(baseline_loss))
+        # print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
+        # print("baseline_loss: {}".format(baseline_loss))
 #
         return total_loss
 
@@ -9491,10 +9491,10 @@ class AC_SARSA_Baseline_V_Gaussian_v4_MarketEnv_Continuous(AbstractPolicy, tf.ke
         baseline_loss = tf.reduce_sum((discounted_rewards - baseline)**2)
         total_loss = (1.0*actor_loss) + (1.0*critic_loss) + (1.0*baseline_loss)
 # DEBUG
-        print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
-        print("actor_loss: {}".format(actor_loss))
-        print("critic_loss: {}".format(critic_loss))
-        print("baseline_loss: {}".format(baseline_loss))
+        # print("avg. actions:\n{}".format(tf.reduce_mean(actions, axis=0)))
+        # print("actor_loss: {}".format(actor_loss))
+        # print("critic_loss: {}".format(critic_loss))
+        # print("baseline_loss: {}".format(baseline_loss))
 #
         return total_loss
 

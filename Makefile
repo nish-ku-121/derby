@@ -5,6 +5,9 @@
 # Default Python image (should match Dockerfile)
 PYTHON_IMAGE ?= python:3.10-slim
 
+# Host port to expose Jupyter on (container still listens on 8888)
+JUPYTER_PORT ?= 8888
+
 # Detect platform
 UNAME_S := $(shell uname -s)
 
@@ -26,14 +29,18 @@ endif
 # Targets
 # ----------------------------
 
-.PHONY: docker-lockfile docker-build docker-shell docker-run
+.PHONY: docker-lockfile docker-build docker-shell docker-run docker-jupyter
 
-# Generate poetry.lock inside Docker (cross-platform)
-docker-lockfile:
+# Generate poetry.lock inside Docker only when pyproject.toml changes
+poetry.lock: pyproject.toml
 	docker run --rm -v "$(PWD_PATH):/app" $(PYTHON_IMAGE) bash -c "cd /app && pip install poetry==2.1.4 && poetry lock"
 
-# Build Docker image
-docker-build:
+# Convenience target to force (re)locking regardless of timestamps
+docker-lockfile:
+	$(MAKE) -B poetry.lock
+
+# Build Docker image (ensure lockfile is up to date first)
+docker-build: poetry.lock
 	docker build -t derby-app .
 
 # Run container with live code mounting
@@ -42,4 +49,13 @@ docker-shell: docker-build
 
 # Generalized Docker run target
 docker-run:
-	docker run --rm -v "$(PWD_PATH):/app" derby-app $(ARGS)
+	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run $(ARGS)"
+
+# Run Jupyter Lab inside Docker with Poetry env (mounts repo and exposes port)
+docker-jupyter: docker-build
+	docker run --rm -it \
+		-p $(JUPYTER_PORT):8888 \
+		-v "$(PWD_PATH):/app" \
+		derby-app bash -lc "cd /app && \
+		poetry run python -m ipykernel install --user --name derby-poetry --display-name 'Python (derby)' || true && \
+		poetry run jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password=''"
