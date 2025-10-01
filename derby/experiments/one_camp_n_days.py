@@ -459,7 +459,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, scale_states_func=scale_states_func, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff, scale_states_func=scale_states_func)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -474,7 +474,7 @@ class Experiment:
         return None, None, None
 
 
-    def exp_5(self, num_days, num_trajs, num_epochs, lr, debug=False):
+    def exp_5(self, num_days, num_trajs, num_epochs, lr, debug=False):  # debug retained for backward compat, no-op
         auction_item_specs = self.auction_item_specs
         auction = self.first_price_auction
         campaigns = self.campaigns
@@ -526,7 +526,7 @@ class Experiment:
         start = time.time()
 
         for i in range(NUM_EPOCHS):
-            train(env, num_of_trajs, horizon_cutoff, scale_states_func=scale_states_func, debug=debug)
+            train(env, num_of_trajs, horizon_cutoff, scale_states_func=scale_states_func)
             avg_and_std_rwds = [(agent.name, np.mean(agent.cumulative_rewards[-num_of_trajs:]), 
                             np.std(agent.cumulative_rewards[-num_of_trajs:])) for agent in env.agents]
             print("epoch: {}, avg and std rwds: {}".format(i, avg_and_std_rwds))
@@ -2461,7 +2461,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2487,7 +2487,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
    
 
@@ -2513,7 +2513,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2539,7 +2539,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2565,7 +2565,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2591,7 +2591,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2617,7 +2617,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
     def exp_1010(self, num_days, num_trajs, num_epochs, lr, debug=False):
@@ -2642,7 +2642,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2668,7 +2668,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2694,7 +2694,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2720,7 +2720,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2746,7 +2746,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2772,7 +2772,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2798,7 +2798,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2824,7 +2824,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2850,7 +2850,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2876,7 +2876,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2902,7 +2902,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2928,7 +2928,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2954,7 +2954,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -2980,7 +2980,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3006,7 +3006,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3032,7 +3032,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3058,7 +3058,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3084,7 +3084,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3110,7 +3110,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3136,7 +3136,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3162,7 +3162,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
    
 
@@ -3188,7 +3188,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3214,7 +3214,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3240,7 +3240,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3266,7 +3266,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3292,7 +3292,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
     def exp_2010(self, num_days, num_trajs, num_epochs, lr, debug=False):
@@ -3317,7 +3317,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3343,7 +3343,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3369,7 +3369,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3395,7 +3395,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3421,7 +3421,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
 
@@ -3447,7 +3447,7 @@ class Experiment:
         ]
 
         # Run the game
-        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True, debug=debug)
+        self.run(env, agents, num_days, num_trajs, num_epochs, 100, vectorize=True)
         return None, None, None
 
     
@@ -4135,7 +4135,7 @@ if __name__ == '__main__':
         raise ValueError('invalid input')
 
     print("Running experiment {}".format(exp_func.__name__))
-    states, actions, rewards = exp_func(num_days, num_trajs, num_epochs, lr, debug=debug)
+    states, actions, rewards = exp_func(num_days, num_trajs, num_epochs, lr, debug=False)
     if debug:
         if states is not None:
             logger.debug("states shape: %s", states.shape)

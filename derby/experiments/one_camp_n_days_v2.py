@@ -6,9 +6,11 @@ import uuid
 import time
 import hashlib
 import logging
+import math
 
-import pandas as pd
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from derby.experiments.one_camp_n_days import Experiment
 from derby.core.agents import Agent
@@ -51,6 +53,7 @@ def run_experiment_from_config(
     config: Dict[str, Any],
     output_dir_override: str | None = None,
     run_id: str | None = None,
+    flush_every: int = 1,
 ) -> str:
     """Run an experiment described by an in-memory config dict (public API).
 
@@ -87,11 +90,23 @@ def run_experiment_from_config(
           distinct seeds produce distinct hashes.
         - Returns: run_id (str) used in parquet filename.
         - Unsupported: legacy exp_* experiment mappings; this runner only supports the simplified schema.
+
+    Runtime / Non-YAML Parameters:
+        flush_every (int, CLI only): Number of epochs between parquet flushes when an output
+            directory is provided. A value of 1 (default) writes each epoch's rows immediately
+            (minimal memory, maximum durability if a long run crashes). Larger values batch
+            multiple epochs in memory before a write, slightly reducing IO overhead at the
+            cost of holding those rows temporarily and risking their loss if the process exits
+            unexpectedly before the next flush. Values <1 are coerced to 1.
     """
     num_days = int(config['num_days'])
     num_trajs = int(config['num_trajs'])
     num_epochs = int(config['num_epochs'])
     label = config.get('label')  # optional; default None if missing
+
+    # Streaming flush interval (epochs) is CLI-controlled only (not from YAML).
+    if flush_every < 1:
+        flush_every = 1
 
     # Optional logging configuration (CLI only; YAML logging keys are ignored)
     output_dir = output_dir_override
@@ -186,27 +201,110 @@ def run_experiment_from_config(
     # Determine run identifier (allow caller to fix it, so failures can still be correlated)
     run_id = run_id or str(uuid.uuid4())
     config_hash = _compute_config_hash(config)
-    rows: List[Dict[str, Any]] = []
+    # Streaming parquet writer state
+    writer = None  # type: ignore
+    out_path = None
+    # Column order (locked for stability / reproducibility)
+    column_order = [
+        "run_id",
+        "config_hash",
+        "label",
+        "setup",
+        "seed",
+        "num_days",
+        "num_trajs",
+        "num_epochs",
+        "epoch",
+        "agent_name",
+        "policy_class",
+        "policy_params_json",
+        "mean_reward",
+        "std_reward",
+        "n_trajs",
+    ]
+    batch_epoch_rows: List[Dict[str, Any]] = []  # buffered rows until flush
+
+    # Pre-declare Arrow schema (forces mean/std to be float32) if Arrow available.
+    arrow_schema = None
+    try:
+        arrow_schema = pa.schema([
+            ("run_id", pa.string()),
+            ("config_hash", pa.string()),
+            ("label", pa.string()),
+            ("setup", pa.string()),
+            ("seed", pa.int64()),
+            ("num_days", pa.int32()),
+            ("num_trajs", pa.int32()),
+            ("num_epochs", pa.int32()),
+            ("epoch", pa.int32()),
+            ("agent_name", pa.string()),
+            ("policy_class", pa.string()),
+            ("policy_params_json", pa.string()),
+            ("mean_reward", pa.float32()),
+            ("std_reward", pa.float32()),
+            ("n_trajs", pa.int32()),
+        ])
+    except Exception:  # pragma: no cover
+        arrow_schema = None
+
+    # Rolling window stats removed (per-epoch parquet logging provides full fidelity for post-hoc analysis).
+
+    def _flush_batch() -> None:
+        nonlocal writer, out_path, batch_epoch_rows
+        if not output_dir or not batch_epoch_rows:
+            return
+
+        # Arrow path
+        if out_path is None:
+            os.makedirs(output_dir, exist_ok=True)
+            out_path = os.path.join(output_dir, f"epoch_agg__{run_id}.parquet")
+        # Build column-wise lists in defined order for efficient table creation.
+        columns_data: Dict[str, List[Any]] = {k: [] for k in column_order}
+        for row in batch_epoch_rows:
+            for col in column_order:
+                columns_data[col].append(row[col])
+        # Infer schema first time.
+        # Enforce float32 for mean/std and use explicit schema if available.
+        try:
+            columns_data["mean_reward"] = [None if v is None or (isinstance(v, float) and math.isnan(v)) else float(np.float32(v)) for v in columns_data["mean_reward"]]
+            columns_data["std_reward"] = [None if v is None or (isinstance(v, float) and math.isnan(v)) else float(np.float32(v)) for v in columns_data["std_reward"]]
+        except Exception:  # pragma: no cover
+            pass
+        if arrow_schema is not None:
+            table = pa.Table.from_pydict(columns_data, schema=arrow_schema)
+        else:
+            table = pa.Table.from_pydict(columns_data)
+        if writer is None:
+            writer = pq.ParquetWriter(out_path, table.schema)
+        writer.write_table(table)
+        batch_epoch_rows = []
+
+    # Memory profiling functionality removed (deprecated CLI flags eliminated).
 
     start = time.time()
     try:
         for i in range(NUM_EPOCHS):
+            # Train one epoch worth of trajectories. If path-level profiling is enabled, also turn on deep
+            # concatenation / per-step instrumentation without needing extra CLI flags.
             train(env, num_of_trajs, horizon_cutoff)
-            # Compute per-agent epoch aggregates
+
+            # Compute per-agent epoch aggregates using ONLY the newly added rewards for this epoch.
             avg_and_std_rwds = []
-            for agent in env.agents:
-                last = agent.cumulative_rewards[-num_of_trajs:]
-                mean_r = float(sum(last) / len(last)) if len(last) > 0 else float("nan")
-                # Use numpy via pandas for std to avoid an extra import
-                std_r = float(pd.Series(last).std(ddof=0)) if len(last) > 0 else float("nan")
-                avg_and_std_rwds.append((agent.name, mean_r, std_r))
+            for agent, ainfo in zip(env.agents, agent_meta):
+                # The training step appended exactly num_of_trajs trajectory rewards for this agent.
+                # Grab the tail slice.
+                current_rewards = agent.cumulative_rewards[-num_of_trajs:]
+                # Compute stats on these trajectory rewards (population std to match prior logic ddof=0)
+                if len(current_rewards) > 0:
+                    mean_r = float(np.mean(current_rewards))
+                    std_r = float(np.std(current_rewards, ddof=0))
+                else:
+                    mean_r = float("nan")
+                    std_r = float("nan")
 
-            logger.info("epoch=%s avg_and_std_rwds=%s", i, avg_and_std_rwds)
-
-            # Append logs
-            if output_dir:
-                for ainfo, stats in zip(agent_meta, avg_and_std_rwds):
-                    row = {
+                # Append to batch rows for parquet.
+                if output_dir:
+                    batch_epoch_rows.append({
                         "run_id": run_id,
                         "config_hash": config_hash,
                         "label": label,
@@ -216,52 +314,47 @@ def run_experiment_from_config(
                         "num_trajs": num_of_trajs,
                         "num_epochs": NUM_EPOCHS,
                         "epoch": i,
-                        "agent_name": stats[0],
+                        "agent_name": agent.name,
                         "policy_class": ainfo["policy_class"],
                         "policy_params_json": json.dumps(ainfo["policy_params"], sort_keys=True),
-                        "mean_reward": stats[1],
-                        "std_reward": stats[2],
+                        "mean_reward": mean_r,
+                        "std_reward": std_r,
                         "n_trajs": num_of_trajs,
-                    }
-                    rows.append(row)
+                    })
 
-            if ((i + 1) % 50) == 0:
-                avg_and_std_rwds_last_50_epochs = []
-                max_last_50_epochs = []
-                for agent in env.agents:
-                    last50 = agent.cumulative_rewards[-50 * num_of_trajs:]
-                    mean_r = float(sum(last50) / len(last50)) if len(last50) > 0 else float("nan")
-                    std_r = float(pd.Series(last50).std(ddof=0)) if len(last50) > 0 else float("nan")
-                    avg_and_std_rwds_last_50_epochs.append((agent.name, mean_r, std_r))
+                avg_and_std_rwds.append((agent.name, mean_r, std_r))
 
-                    # Correct max: compute per-epoch mean rewards and then take their max.
-                    if len(last50) == 50 * num_of_trajs and num_of_trajs > 0:
-                        per_epoch_means = np.array(last50).reshape(50, num_of_trajs).mean(axis=1)
-                        max_epoch_mean = float(np.max(per_epoch_means))
-                    else:
-                        max_epoch_mean = mean_r
-                    max_last_50_epochs.append((agent.name, max_epoch_mean))
+                # Discard per-trajectory rewards to prevent unbounded growth (retain nothing between epochs).
+                try:
+                    agent.cumulative_rewards = np.empty(0, dtype=np.float32)
+                except Exception:
+                    # Fallback safe reset
+                    agent.cumulative_rewards = []
 
-                logger.info("Avg of last 50 epochs: %s", avg_and_std_rwds_last_50_epochs)
-                logger.info("Max of last 50 epochs (epoch means): %s", max_last_50_epochs)
+            logger.info("epoch=%s avg_and_std_rwds=%s", i, avg_and_std_rwds)
 
+            # Flush parquet batch if needed
+            if output_dir and ((i + 1) % flush_every == 0):
+                _flush_batch()
+
+            # (memory profiling removed)
         end = time.time()
         logger.info("Training complete in %.2f sec", end - start)
         return run_id
     finally:
         # Always attempt to write whatever we have so far
-        if output_dir and rows:
-            os.makedirs(output_dir, exist_ok=True)
-            out_path = os.path.join(output_dir, f"epoch_agg__{run_id}.parquet")
-            df = pd.DataFrame(rows)
-            try:
-                df.to_parquet(out_path, index=False)
-                logger.info("Wrote epoch aggregates to %s", out_path)
-            except Exception as e:
-                logger.error("Failed to write parquet to %s: %s", out_path, e)
+        try:
+            # Final flush & close writer
+            if output_dir:
+                _flush_batch()
+                if writer is not None:  # type: ignore
+                    writer.close()  # type: ignore
+                    logger.info("Wrote epoch aggregates to %s", out_path)
+        except Exception as e:  # pragma: no cover
+            logger.error("Failed final parquet write/close: %s", e)
 
 
-def main(yaml_path: str, output_dir: str | None = None, log_level: str | None = "INFO") -> None:
+def main(yaml_path: str, output_dir: str | None = None, log_level: str | None = "INFO", flush_every: int = 1) -> None:
     try:
         import yaml  # type: ignore
     except ImportError as e:
@@ -289,7 +382,11 @@ def main(yaml_path: str, output_dir: str | None = None, log_level: str | None = 
     with open(yaml_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
 
-    run_experiment_from_config(config, output_dir_override=output_dir)
+    run_experiment_from_config(
+        config,
+        output_dir_override=output_dir,
+        flush_every=flush_every,
+    )
 
 
 if __name__ == "__main__":
@@ -300,5 +397,11 @@ if __name__ == "__main__":
                         help='Optional directory to write epoch-level parquet logs')
     parser.add_argument('--log-level', dest='log_level', default='INFO', type=str,
                         help='Logging verbosity for this run (e.g. DEBUG, INFO, WARNING, ERROR, CRITICAL, NONE). Not propagated to inner APIs.')
+    parser.add_argument('--flush-every', dest='flush_every', default=1, type=int,
+                    help='Number of epochs between parquet flushes (default 1).')
+    # Memory profiling CLI flags removed (were: --profile-memory, --mem-interval, --profile-memory-path)
     args = parser.parse_args()
-    main(args.config, output_dir=args.output_dir, log_level=args.log_level)
+    main(args.config,
+        output_dir=args.output_dir,
+        log_level=args.log_level,
+        flush_every=args.flush_every)
