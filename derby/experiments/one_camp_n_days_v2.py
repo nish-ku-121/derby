@@ -1,17 +1,19 @@
 from typing import Any, Dict, List
+import logging
+import hashlib
 import inspect
 import os
 import json
 import uuid
 import time
-import hashlib
-import logging
 import math
+import random
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-
+import tensorflow as tf
+ 
 from derby.experiments.one_camp_n_days import Experiment
 from derby.core.agents import Agent
 import derby.core.policies as policy_mod
@@ -47,6 +49,21 @@ def _compute_config_hash(config: Dict[str, Any]) -> str:
     # Stable string with sorted keys
     cfg_str = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(cfg_str.encode("utf-8")).hexdigest()
+
+
+def _seed_everything(seed: int) -> None:
+    try: random.seed(seed)
+    except Exception: pass
+    try: np.random.seed(seed)
+    except Exception: pass
+    try: tf.random.set_seed(seed)
+    except Exception: pass
+
+
+def _derive_policy_seed(global_seed: int, policy_class: str, agent_name: str) -> int:
+    data = f"{global_seed}:{policy_class}:{agent_name}".encode()
+    h = hashlib.sha256(data).digest()
+    return int.from_bytes(h[:4], "big")
 
 
 def run_experiment_from_config(
@@ -111,14 +128,13 @@ def run_experiment_from_config(
     # Optional logging configuration (CLI only; YAML logging keys are ignored)
     output_dir = output_dir_override
 
-    yaml_seed = config.get('seed')
-    seed = None
+    yaml_seed = config.get("seed")
+    global_seed = None
     if yaml_seed is not None:
-        try:
-            seed = int(yaml_seed)
-        except Exception:
-            raise ValueError(f"Invalid seed value in config: {yaml_seed}")
-    experiment = Experiment(seed=seed)
+        global_seed = int(yaml_seed)
+        _seed_everything(global_seed)
+
+    experiment = Experiment(seed=global_seed)
 
     # Choose environment setup
     setup_name = config.get('setup')  # full function name like 'setup_1'
@@ -161,6 +177,16 @@ def run_experiment_from_config(
             except ValueError:
                 pass
 
+        # TODO: get rid of this once all policies accept seed
+        # Derive and inject per-policy seed (order-invariant) for targeted policies if global seed present
+        if global_seed is not None and 'seed' not in params and policy_name in {
+            'REINFORCE_Baseline_Gaussian_v2_f32_manual_MarketEnv_Continuous',
+            'REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous',
+        }:
+            # Only add if __init__ actually accepts it
+            if 'seed' in inspect.signature(policy_cls.__init__).parameters:
+                params['seed'] = _derive_policy_seed(global_seed, policy_name, name)
+
         # Only pass kwargs that the policy's __init__ accepts
         init = policy_cls.__init__
         filtered_params = _filter_kwargs_for_callable(init, params)
@@ -187,6 +213,9 @@ def run_experiment_from_config(
             "policy_params": filtered_params,
         })
 
+        if global_seed is not None and hasattr(policy_instance, 'seed'):
+            logger.info(f"[seed] policy={policy_name} agent={name} seed={getattr(policy_instance,'seed', None)}")
+
     # Train loop (mirrors Experiment.run but allows logging per epoch)
     num_of_days = num_days
     num_of_trajs = num_trajs
@@ -210,7 +239,7 @@ def run_experiment_from_config(
         "config_hash",
         "label",
         "setup",
-        "seed",
+        "global_seed",
         "num_days",
         "num_trajs",
         "num_epochs",
@@ -232,7 +261,7 @@ def run_experiment_from_config(
             ("config_hash", pa.string()),
             ("label", pa.string()),
             ("setup", pa.string()),
-            ("seed", pa.int64()),
+            ("global_seed", pa.int64()),
             ("num_days", pa.int32()),
             ("num_trajs", pa.int32()),
             ("num_epochs", pa.int32()),
@@ -309,7 +338,7 @@ def run_experiment_from_config(
                         "config_hash": config_hash,
                         "label": label,
                         "setup": setup_name,
-                        "seed": seed,
+                        "global_seed": global_seed,
                         "num_days": num_of_days,
                         "num_trajs": num_of_trajs,
                         "num_epochs": NUM_EPOCHS,

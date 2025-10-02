@@ -81,37 +81,35 @@ class AbstractPolicy(ABC):
         pass
 
     def discount(self, rewards):
-        '''
-        :param rewards: an array of shape [batch_size, episode_length-1].
-        :return: discounted_rewards: an array of shape [batch_size, episode_length-1] 
-        containing the sum of discounted rewards for each timestep.
-        '''
-        if type(rewards) is np.ndarray or type(rewards) is list:
+        """Vectorized discounted return computation (gamma-return) over last axis.
+
+        Semantics: For each trajectory reward sequence r[0..T-1], returns G_t = r_t + gamma * G_{t+1}.
+        This matches the previous Python implementation exactly, but is now graph-friendly
+        (no Python loops / mutable array writes) so it can be safely used inside tf.function.
+
+        Args:
+            rewards: Tensor / array of shape [batch_size, T] (T == episode_length-1).
+        Returns:
+            discounted: Tensor of shape [batch_size, T] with discounted returns per timestep.
+        """
+        if not tf.is_tensor(rewards):
             rewards = tf.convert_to_tensor(rewards)
-        if tf.is_tensor(rewards):
-            return tf.map_fn(self.discount_helper, rewards)
-        else:
-            raise Exception("Don't know how to discount rewards where type(rewards) = {}".format(type(rewards)))
-
-    def discount_helper(self, rewards):
-        '''
-        Takes in a list of rewards for each timestep in an episode, 
-        and returns a list of the sum of discounted rewards for
-        each timestep.
-
-        :param rewards: List of rewards from an episode [r_{t0},..., r_{tN-1}]. 
-        shape is [episode_length-1].
-        :param discount_factor: Gamma discounting factor to use, defaults to .99.
-        :return: discounted_rewards: list containing the sum of discounted 
-        rewards for each timestep in the original rewards list.
-        '''
-        discount_factor = self.discount_factor
-        timesteps = len(rewards)
-        discounted_rewards = np.zeros(timesteps)
-        discounted_rewards[timesteps-1] = rewards[timesteps-1]
-        for i in range(timesteps-2,-1,-1):
-            discounted_rewards[i] = (discounted_rewards[i+1]*discount_factor) + rewards[i]
-        return discounted_rewards
+        rewards = tf.cast(rewards, rewards.dtype if rewards.dtype.is_floating else tf.float32)
+        gamma = tf.cast(self.discount_factor, rewards.dtype)
+        # Reverse time dimension
+        rev = tf.reverse(rewards, axis=[1])  # [B, T]
+        # Make time-major for tf.scan: [T, B]
+        rev_tm = tf.transpose(rev, [1, 0])
+        init = tf.zeros_like(rev_tm[0])  # shape [B]
+        # Scan forward over reversed sequence to accumulate discounted returns
+        def scan_fn(acc, r):
+            return r + gamma * acc
+        discounted_rev_tm = tf.scan(scan_fn, rev_tm, initializer=init)
+        # Back to batch-major: [B, T]
+        discounted_rev = tf.transpose(discounted_rev_tm, [1, 0])
+        # Reverse again to restore chronological order
+        discounted = tf.reverse(discounted_rev, axis=[1])
+        return discounted
 
 
 class FixedBidPolicy(AbstractPolicy):
@@ -2992,6 +2990,7 @@ class REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.ker
         self.mu_bias_init = None
         self.sigma_bias_init = None
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
+        self._dtype = tf.float64
         
         self.dense1 = tf.keras.layers.Dense(self.layer1_size, kernel_initializer=self.layer1_ker_init, activation=None, dtype='float64')
         
@@ -3035,6 +3034,7 @@ class REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.ker
         ).
         '''
         # Apply dense layers
+        states = tf.cast(states, self._dtype)
         output = self.dense1(states)
         output = tf.nn.leaky_relu(output)
 
@@ -3124,6 +3124,9 @@ class REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.ker
         '''
         # states is of episode_length, but actions is of episode_length-1.
         # So delete the last state of each episode.
+        states = tf.cast(states, self._dtype)
+        actions = tf.cast(actions, self._dtype)
+        rewards = tf.cast(rewards, self._dtype)
         action_distr = self.call(states[:,:-1])
 
         # if each subaction is [auction_item_spec_id, bid_per_item, total_limit],
@@ -3146,11 +3149,11 @@ class REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.ker
         action_prbs = tf.reduce_prod(tf.reduce_prod(action_distr.prob(subaction_dists_vals), axis=3), axis=2)
        
         # shape [batch_size, episode_length-1]
-        discounted_rewards = self.discount(rewards)
+        discounted_rewards = tf.cast(self.discount(rewards), self._dtype)
         if self.shape_reward:
             discounted_rewards = tf.where(discounted_rewards > 0, tf.math.log(discounted_rewards+1), discounted_rewards)
         # shape [batch_size, episode_length, 1]
-        state_values = self.value_function(states)
+        state_values = tf.cast(self.value_function(states), self._dtype)
         # reshape to [batch_size, episode_length]
         state_values = tf.reshape(state_values, (*state_values.shape[:1],-1))
         baseline = state_values[:,:-1]
@@ -3172,6 +3175,11 @@ class REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.ker
             gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
+
+## NOTE: Removed REINFORCE_Baseline_Gaussian_v2_f32_MarketEnv_Continuous in favor of sandbox
+## implementation located in policy_sandbox.py. Backward compatibility is preserved by
+## importing and re-exporting the sandbox class name below.
+from .policy_sandbox import REINFORCE_Baseline_Gaussian_v2_f32_manual_MarketEnv_Continuous  # noqa: E402,F401
 
 class REINFORCE_Baseline_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
