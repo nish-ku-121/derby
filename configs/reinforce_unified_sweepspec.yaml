@@ -1,0 +1,25 @@
+# Sweep specification for unified REINFORCE policy.
+# Generate concrete configs with:
+#   make docker-run ARGS="python -m pipeline.make_grid --spec configs/reinforce_unified_sweepspec.yaml"
+
+sweep_name: reinforce_unified_demo
+base_config: configs/one_camp_n_days_v2_config.yaml
+# Static overrides applied before each combo
+override:
+  agents.0.policy: REINFORCE
+  num_epochs: 2
+  num_trajs: 40
+  # Force learner seed (optional)
+  # seed: 123
+# Cartesian parameter grid (dotted keys). Only learner (agents.0) is swept.
+grid:
+  agents.0.params.actor_final_activation: [softplus, relu]
+  agents.0.params.actor_hidden_layers: [1, 4]
+  agents.0.params.actor_hidden_units: [1, 6]
+  agents.0.params.actor_hidden_activation: [leaky_relu, elu]
+# Optional restrictions
+restrict:
+  max_combinations: 32     # cut off if grid grows big
+  sample_fraction: 1.0     # set <1.0 to random sample combos
+# Label template uses the last segment of each dotted key.
+label_template: "{actor_final_activation}|L={actor_hidden_layers}|U={actor_hidden_units}|ah={actor_hidden_activation}"

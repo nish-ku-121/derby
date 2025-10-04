@@ -392,6 +392,12 @@ class DummyREINFORCE(AbstractPolicy, tf.keras.Model):
             gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
+# --- Unified REINFORCE import (expose for YAML configs) ---
+try:  # pragma: no cover
+    from derby.policies.reinforce import REINFORCE  # noqa: E402,F401
+except Exception:  # If dependency chain fails, keep module importable
+    REINFORCE = None  # type: ignore
+
 
 class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 
@@ -3176,10 +3182,8 @@ class REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous(AbstractPolicy, tf.ker
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 
-## NOTE: Removed REINFORCE_Baseline_Gaussian_v2_f32_MarketEnv_Continuous in favor of sandbox
-## implementation located in policy_sandbox.py. Backward compatibility is preserved by
-## importing and re-exporting the sandbox class name below.
-from .policy_sandbox import REINFORCE_Baseline_Gaussian_v2_f32_manual_MarketEnv_Continuous  # noqa: E402,F401
+## NOTE: Legacy sandbox policy removed; unified implementation now lives in derby/policies/reinforce.py.
+## References to REINFORCE_Baseline_Gaussian_v2_f32_manual_MarketEnv_Continuous should migrate to REINFORCE.from_preset('v2').
 
 class REINFORCE_Baseline_Gaussian_v3_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 

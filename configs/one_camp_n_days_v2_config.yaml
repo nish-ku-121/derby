@@ -1,17 +1,31 @@
+## Base experiment config (updated to unified REINFORCE policy)
+# This file serves as the base_config for sweep specs (e.g. reinforce_unified_sweepspec.yaml)
+# Unified REINFORCE replaces legacy preset class names like REINFORCE_Baseline_Gaussian_v2_*
+
 num_days: 1            # days per trajectory
 num_trajs: 200         # trajectories per epoch
-num_epochs: 10        # training epochs
+num_epochs: 10         # training epochs
 setup: setup_1         # maps to Experiment.setup_1()
 seed: 123              # optional; remove for stochastic run
-label: base_config       # optional, for easier filtering later
+label: base_config     # optional, for easier filtering later
 agents:
-    - name: learner
-      policy: REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous
-      params:
-          learning_rate: 5e-6
-          shape_reward: false
-    - name: baseline
-      policy: FixedBidPolicy
-      params:
-          bid_per_item: 5
-          total_limit: 5
+  - name: learner
+    policy: REINFORCE
+    params:
+      learning_rate: 5e-6
+      shape_reward: false
+      # Explicit architecture (matches a simple baseline-style net)
+      actor_hidden_layers: 1
+      actor_hidden_units: 1
+      critic_hidden_layers: 1
+      critic_hidden_units: 6
+      actor_final_activation: softplus
+      start_near_bpr: true
+      sigma_scale: 0.5
+      sigma_floor: 1e-5
+      dist_type: gaussian
+  - name: baseline
+    policy: FixedBidPolicy
+    params:
+      bid_per_item: 5
+      total_limit: 5

@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# DEPRECATION NOTICE:
+# This script is retained temporarily for backward compatibility.
+# New workflow:
+#   1) Generate configs: python -m pipeline.make_grid --spec <sweepspec.yaml>
+#   2) Run configs:      python -m pipeline.run_configs --configs sweeps/<name>/configs --output results/<name>
+# The logic here (dynamic Cartesian spawning) will be removed in a future cleanup.
 from __future__ import annotations
 
 import argparse
