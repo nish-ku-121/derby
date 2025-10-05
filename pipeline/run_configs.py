@@ -20,49 +20,61 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as cf
 import json
-import os
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 
-# Parquet filename pattern used by one_camp_n_days_v2 (epoch_agg__<run_id>.parquet)
-# We cannot know run_id ahead of time; we use label presence in existing parquet filenames directory
-# OR simply skip existence check unless user implements a manifest. For now we skip duplication by
-# checking a stamp file.
-STAMP_NAME = "_RUN_COMPLETE.stamp"
+STAMP_NAME = "_RUN_COMPLETE.stamp"  # stamp file signals a completed run
+MAX_STDERR_TAIL = 5000  # max chars of stderr tail we retain for failures
+
+Result = Dict[str, Any]
 
 
 def _discover_configs(cfg_dir: Path) -> List[Path]:
+    """Return sorted list of run config YAML files in a directory."""
     return sorted([p for p in cfg_dir.glob('*.yaml') if p.is_file()])
 
 
 def _build_command(cfg_path: Path, output_dir: Path) -> List[str]:
-    return [
-        sys.executable, '-m', 'derby.experiments.one_camp_n_days_v2',
-        '--config', str(cfg_path),
-        '-o', str(output_dir)
-    ]
+    """Build the subprocess command to execute a single experiment config."""
+    return [sys.executable, '-m', 'derby.experiments.one_camp_n_days_v2', '--config', str(cfg_path), '-o', str(output_dir)]
 
 
-def _run_one(cfg_path: Path, output_dir: Path, force: bool, dry_run: bool) -> dict:
+def _run_one(cfg_path: Path, output_dir: Path, force: bool, dry_run: bool) -> Result:
+    """Execute (or simulate) a single config.
+
+    Returns a result dict with keys: config, status, and optionally cmd / rc / stderr / error.
+    """
     run_dir = output_dir / cfg_path.stem  # isolate each run's artifacts
     run_dir.mkdir(parents=True, exist_ok=True)
     stamp = run_dir / STAMP_NAME
     if stamp.exists() and not force:
-        return {"config": str(cfg_path), "status": "skipped"}
+        return {"config": str(cfg_path), "status": "skipped", "output_dir": str(run_dir.resolve())}
     cmd = _build_command(cfg_path, run_dir)
     if dry_run:
-        return {"config": str(cfg_path), "status": "dry-run", "cmd": ' '.join(cmd)}
+        return {"config": str(cfg_path), "status": "dry-run", "cmd": ' '.join(cmd), "duration_s": 0.0, "output_dir": str(run_dir.resolve())}
     try:
+        t0 = time.time()
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        dt = time.time() - t0
         if proc.returncode == 0:
             stamp.write_text("ok")
-            return {"config": str(cfg_path), "status": "ok"}
+            return {"config": str(cfg_path), "status": "ok", "duration_s": round(dt, 4), "output_dir": str(run_dir.resolve())}
         else:
-            return {"config": str(cfg_path), "status": "failed", "rc": proc.returncode, "stderr": proc.stderr[-5000:]}
+            return {"config": str(cfg_path), "status": "failed", "rc": proc.returncode, "stderr": proc.stderr[-MAX_STDERR_TAIL:], "duration_s": round(dt, 4), "output_dir": str(run_dir.resolve())}
     except Exception as e:  # pragma: no cover
-        return {"config": str(cfg_path), "status": "error", "error": str(e)}
+        return {"config": str(cfg_path), "status": "error", "error": str(e), "duration_s": 0.0, "output_dir": str(run_dir.resolve())}
+
+
+def _print_result(name: str, result: Result) -> None:
+    """Uniform printing for a result line."""
+    if 'cmd' in result:
+        print(f"{name}: {result['status']} -> {result['cmd']}")
+    else:
+        print(f"{name}: {result['status']}")
 
 
 def main():
@@ -87,29 +99,71 @@ def main():
         return
     print(f"[run_configs] Discovered {len(configs)} configs in {cfg_dir}")
 
-    results = []
+    overall_start_ts = time.time()
+    overall_start_iso = datetime.fromtimestamp(overall_start_ts, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+    results: List[Result] = []
     if args.parallel <= 1:
         for p in configs:
             r = _run_one(p, output_dir, args.force, args.dry_run)
             results.append(r)
-            print(f"{p.name}: {r['status']}")
+            _print_result(p.name, r)
     else:
+        if args.parallel < 1:
+            raise SystemExit("--parallel must be >= 1")
         with cf.ThreadPoolExecutor(max_workers=args.parallel) as ex:
             fut_map = {ex.submit(_run_one, p, output_dir, args.force, args.dry_run): p for p in configs}
             for fut in cf.as_completed(fut_map):
                 r = fut.result()
                 results.append(r)
                 cfg_name = Path(r['config']).name
-                print(f"{cfg_name}: {r['status']}")
+                _print_result(cfg_name, r)
 
     # Summary
-    counts = {}
+    counts: Dict[str, int] = {}
     for r in results:
         counts[r['status']] = counts.get(r['status'], 0) + 1
-    print("Summary:", counts)
+    # Order summary for readability
+    ordered_keys = [k for k in ['ok', 'skipped', 'failed', 'error', 'dry-run'] if k in counts] + [k for k in counts if k not in {'ok','skipped','failed','error','dry-run'}]
+    ordered_summary = {k: counts[k] for k in ordered_keys}
+    print("Summary:", ordered_summary)
+
+    overall_end_ts = time.time()
+    overall_end_iso = datetime.fromtimestamp(overall_end_ts, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+    total_duration_s = round(overall_end_ts - overall_start_ts, 4)
+
+    # Persist a manifest so failures/success can be inspected later without re-running.
+    manifest_path = output_dir / 'run_summary.json'
+    try:
+        manifest_payload = {
+            "results": results,
+            "summary": ordered_summary,
+            # root_output_dir: overall destination root (backward-compatible 'output_dir' retained temporarily)
+            "root_output_dir": str(output_dir.resolve()),
+            "output_dir": str(output_dir.resolve()),
+            "start_time": overall_start_iso,
+            "end_time": overall_end_iso,
+            "total_duration_s": total_duration_s,
+        }
+        with manifest_path.open('w', encoding='utf-8') as f:
+            json.dump(manifest_payload, f, indent=2)
+        print(f"[run_configs] Wrote manifest {manifest_path}")
+    except Exception as e:  # pragma: no cover
+        print(f"[run_configs] WARNING: could not write manifest ({e})", file=sys.stderr)
+
+    # Write failure detail files for post-mortem (stderr tail)
+    for r in results:
+        if r['status'] in {'failed', 'error'}:
+            run_dir = output_dir / Path(r['config']).stem
+            fail_path = run_dir / 'failure.json'
+            detail = {k: v for k, v in r.items() if k not in {'config'}}
+            try:
+                with fail_path.open('w', encoding='utf-8') as f:
+                    json.dump(detail, f, indent=2)
+            except Exception:
+                pass
 
     if args.json_out:
-        print(json.dumps({"results": results, "summary": counts}, indent=2))
+        print(json.dumps(manifest_payload, indent=2))
 
 
 if __name__ == '__main__':

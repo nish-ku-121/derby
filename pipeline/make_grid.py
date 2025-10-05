@@ -1,29 +1,27 @@
 #!/usr/bin/env python3
-"""Generate a directory of concrete experiment configs from a sweep spec.
+"""Generate concrete experiment configs from a sweep spec (minimal version).
 
-Minimal spec format (YAML):
+We intentionally keep labeling dead simple: the generated config's label is just the
+policy class name string (e.g. "REINFORCE"). Any richer run identification should be
+handled downstream via the policy instance __repr__ in logs or by explicit user fields.
 
-sweep_name: reinforce_unified_demo          # required
-base_config: configs/one_camp_n_days_v2_config.yaml
-override:                                    # (optional) static dotted-key overrides applied before grid
-  agents.0.policy: REINFORCE
-  num_epochs: 3
-  num_trajs: 80
-grid:                                        # (optional) cartesian parameter grid (dotted keys → list)
-  agents.0.params.actor_final_activation: [softplus, relu]
-  agents.0.params.actor_hidden_layers: [1, 4]
-  agents.0.params.actor_hidden_units: [1, 6]
-  agents.0.params.actor_hidden_activation: [leaky_relu, elu]
-restrict:                                    # (optional)
-  max_combinations: 64
-  sample_fraction: 0.5
-label_template: "{actor_final_activation}|L={actor_hidden_layers}|U={actor_hidden_units}|ah={actor_hidden_activation}"  # (optional)
+Minimal spec keys:
+    sweep_name (str, required)
+    base_config (path, required)
+    override (mapping, optional) - dotted-key overrides
+    grid (mapping, optional) - dotted-key -> list for cartesian product
+    restrict.max_combinations / restrict.sample_fraction (optional)
 
-Outputs: sweeps/<sweep_name>/configs/run_0001.yaml ...
-Each config's 'label' field set to: <sweep_name>__<suffix> (suffix derived from template or canonical param list)
+Example:
+    sweep_name: demo
+    base_config: configs/one_camp_n_days_v2_config.yaml
+    override:
+        agents.0.policy: REINFORCE
+    grid:
+        agents.0.params.actor_hidden_layers: [1, 3]
+        agents.0.params.actor_hidden_units: [8, 32]
 
-Usage:
-  python -m pipeline.make_grid --spec sweepspec.yaml
+Outputs placed in: sweeps/<sweep_name>/configs/run_0001.yaml etc.
 """
 from __future__ import annotations
 
@@ -32,6 +30,9 @@ import itertools
 import os
 import random
 import sys
+import inspect
+import string
+from derby.policies.reinforce import REINFORCE  # direct import keeps file simple
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List
@@ -78,19 +79,6 @@ def _set_by_dotted_key(cfg: Dict[str, Any], dotted_key: str, value: Any) -> None
                 cur = cur[part]
 
 
-def _extract_label_vars(dotted_keys: List[str]) -> List[str]:
-    # Use last token (after final dot) as the variable name for label template context
-    names = [k.split('.')[-1] for k in dotted_keys]
-    # Deduplicate preserving order
-    seen = set()
-    out: List[str] = []
-    for n in names:
-        if n not in seen:
-            seen.add(n)
-            out.append(n)
-    return out
-
-
 def expand_grid(grid: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
     if not grid:
         return [{}]
@@ -124,35 +112,148 @@ def _sample_combos(combos: List[Dict[str, Any]], max_combos: int | None, sample_
     return out
 
 
-def build_label(base_name: str, combo: Dict[str, Any], template: str | None) -> str:
-    if template:
-        # Build context with last-segment names; if collisions occur, later keys override earlier
-        ctx: Dict[str, Any] = {}
-        for full_key, value in combo.items():
-            ctx[full_key.split('.')[-1]] = value
+POLICY_REGISTRY: Dict[str, Any] = {
+    'reinforce': REINFORCE,
+}
+
+
+def _resolve_policy_class(policy_token: Any):
+    """Resolve a policy token to a known class via explicit registry.
+
+    If token is already a class/object, return it unchanged. Returns None if unknown.
+    """
+    if not isinstance(policy_token, str):
+        return policy_token
+    return POLICY_REGISTRY.get(policy_token.lower())
+
+
+def build_label(combo: Dict[str, Any], template: str | None, policy_cls: Any, learner_params: Dict[str, Any]) -> str:
+    """Compose final label with strict template validation.
+
+    Rules:
+      - If no template: label == <PolicyClassName> (or 'policy' if unresolved).
+      - If template provided: every placeholder must be a constructor (__init__) parameter
+        name of the resolved policy class. If policy cannot be resolved, raise.
+      - Context values are taken from: policy __init__ defaults, then learner_params, then
+        sweep combo overrides (last wins). This lets templates reference params even when
+        they are not part of the sweep (using their default or base-config value).
+    """
+    if policy_cls is None:
+        if template:
+            raise ValueError("Cannot apply label_template: policy class could not be resolved.")
+        return "policy"
+
+    policy_name = getattr(policy_cls, '__name__', str(policy_cls))
+    if not template:
+        # Attempt repr(policy_instance) for richer label if constructor allows a lightweight instantiation.
         try:
-            suffix = template.format(**ctx)
-        except KeyError as e:
-            missing = e.args[0]
-            raise KeyError(f"label_template references missing key '{missing}'. Available: {list(ctx)}") from e
-    else:
-        # Canonical key=value|... using short names
-        parts = []
-        for fk in sorted(combo.keys()):
-            parts.append(f"{fk.split('.')[-1]}={combo[fk]}")
-        suffix = "|".join(parts) if parts else "base"
-    return f"{base_name}__{suffix}"
+            sig = inspect.signature(policy_cls.__init__)
+            # Build minimal kwargs: use defaults where available; required params get simple stand-ins.
+            kwargs = {}
+            for pname, p in sig.parameters.items():
+                if pname == 'self':
+                    continue
+                if p.default is not inspect._empty:
+                    kwargs[pname] = p.default
+                else:
+                    # Provide minimal stand-ins for known required params.
+                    if pname == 'auction_item_spec_ids':
+                        kwargs[pname] = [0]
+                    elif pname == 'num_dist_per_spec':
+                        kwargs[pname] = 1
+                    else:
+                        # Skip unknown required param; will likely raise
+                        raise RuntimeError(f"Cannot auto-instantiate policy for repr; required param '{pname}' has no default")
+            instance = policy_cls(**kwargs)
+            return repr(instance)
+        except Exception:
+            # Fallback to simple class name if instantiation fails
+            return policy_name
+
+    # Introspect constructor parameters fresh each call (simplicity over micro-optimizing)
+    sig = inspect.signature(policy_cls.__init__)
+    param_defaults: Dict[str, Any] = {}
+    valid_params: set[str] = set()
+    for pname, p in sig.parameters.items():
+        if pname == 'self':
+            continue
+        valid_params.add(pname)
+        if p.default is not inspect._empty:
+            param_defaults[pname] = p.default
+
+    # Extract placeholder field names from template
+    formatter = string.Formatter()
+    field_names: set[str] = set()
+    for literal_text, field_name, format_spec, conversion in formatter.parse(template):
+        if field_name is not None and field_name != '':
+            field_names.add(field_name)
+
+    # Validate placeholders strictly
+    invalid = [f for f in field_names if f not in valid_params]
+    if invalid:
+        raise ValueError(
+            "label_template references non-policy parameters: "
+            + ", ".join(invalid)
+            + f". Valid policy params: {sorted(valid_params)}"
+        )
+
+    # Build context: defaults -> learner params -> combo short-key overrides
+    ctx: Dict[str, Any] = dict(param_defaults)
+    ctx.update(learner_params or {})
+    for full_key, value in combo.items():
+        short = full_key.split('.')[-1]
+        if short in valid_params:  # only include if actually a policy param
+            ctx[short] = value
+
+    # Ensure all referenced placeholders have values (should, due to defaults or overrides)
+    missing_values = [f for f in field_names if f not in ctx]
+    if missing_values:
+        raise ValueError(
+            "Missing values for template fields: " + ", ".join(missing_values)
+        )
+
+    try:
+        rendered = template.format(**ctx)
+    except KeyError as e:
+        missing = e.args[0]
+        raise KeyError(
+            f"label_template formatting failed; missing key '{missing}'. Context keys: {list(ctx)}"
+        ) from e
+    return f"{policy_name}{rendered}"
 
 
-def generate_configs(spec_path: str, output_root: str | None = None) -> None:
+def generate_configs(spec_path: str, configs_dir: str) -> None:
     spec = _read_yaml(spec_path)
     sweep_name = spec.get('sweep_name')
     if not sweep_name:
         raise ValueError("sweep_name is required in sweep spec")
-    base_config_path = spec.get('base_config')
-    if not base_config_path:
+    raw_base_config = spec.get('base_config')
+    if not raw_base_config:
         raise ValueError("base_config is required in sweep spec")
-    base_cfg = _read_yaml(base_config_path)
+    spec_dir = Path(spec_path).parent
+    # Strategy:
+    #  1) If path is absolute and exists -> use it.
+    #  2) If relative and exists as given (project-root relative) -> use it.
+    #  3) Else try spec_dir / path.
+    #  4) If still missing, raise with helpful diagnostics.
+    candidate_paths = []
+    p = Path(raw_base_config)
+    if p.is_absolute():
+        candidate_paths.append(p)
+    else:
+        candidate_paths.append(p)  # as provided (likely project-root relative)
+        candidate_paths.append(spec_dir / p)  # relative to spec location
+    chosen: Path | None = None
+    for cand in candidate_paths:
+        if cand.exists():
+            chosen = cand.resolve()
+            break
+    if chosen is None:
+        tried = "\n  - ".join(str(c.resolve()) for c in candidate_paths)
+        raise FileNotFoundError(
+            "base_config not found. Tried:\n  - " + tried + f"\n(spec_dir={spec_dir.resolve()})"
+        )
+    base_cfg = _read_yaml(str(chosen))
 
     overrides: Dict[str, Any] = spec.get('override', {}) or {}
     grid: Dict[str, List[Any]] = spec.get('grid', {}) or {}
@@ -168,9 +269,8 @@ def generate_configs(spec_path: str, output_root: str | None = None) -> None:
         seed=seed,
     )
 
-    # Prepare output directory
-    root = Path(output_root) if output_root else Path("sweeps")
-    out_dir = root / sweep_name / "configs"
+    # Prepare (now mandatory) output directory
+    out_dir = Path(configs_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Apply overrides once to a fresh copy per combo
@@ -180,9 +280,11 @@ def generate_configs(spec_path: str, output_root: str | None = None) -> None:
         apply_overrides(cfg, overrides)
         for k, v in combo.items():
             apply_overrides(cfg, {k: v})
-        # Label update
-        label = build_label(sweep_name, combo, label_template)
-        cfg['label'] = label
+        learner = cfg.get('agents', [{}])[0]
+        learner_policy_token = learner.get('policy')
+        learner_params = learner.get('params', {}) or {}
+        policy_cls = _resolve_policy_class(learner_policy_token)
+        cfg['label'] = build_label(combo, label_template, policy_cls, learner_params)
         # Ensure each agent has consistent policy params section if present
         # (We don't mutate beyond provided dotted keys.)
         run_path = out_dir / f"run_{idx:04d}.yaml"
@@ -195,9 +297,9 @@ def generate_configs(spec_path: str, output_root: str | None = None) -> None:
 def main():
     ap = argparse.ArgumentParser(description="Generate concrete configs from a sweep spec")
     ap.add_argument('--spec', required=True, help='Path to sweep spec YAML')
-    ap.add_argument('--output-root', help='Optional root directory (default sweeps/)')
+    ap.add_argument('--configs-dir', required=True, help='Directory to write generated run_<n>.yaml configs')
     args = ap.parse_args()
-    generate_configs(args.spec, args.output_root)
+    generate_configs(args.spec, args.configs_dir)
 
 
 if __name__ == '__main__':
