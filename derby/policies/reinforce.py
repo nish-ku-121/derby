@@ -43,7 +43,8 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
                  actor_hidden_layers: int = 1, actor_hidden_units: int = 1,
                  actor_hidden_activation='leaky_relu',
                  critic_hidden_layers: int = 1, critic_hidden_units: int = 6,
-                 critic_hidden_activation='relu'):
+                 critic_hidden_activation='relu',
+                 use_baseline: bool = True):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -77,6 +78,7 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
         self.critic_hidden_units = int(critic_hidden_units)
         self._actor_hidden_activation_fn, self._actor_hidden_activation_name = self._resolve_activation(actor_hidden_activation)
         self._critic_hidden_activation_fn, self._critic_hidden_activation_name = self._resolve_activation(critic_hidden_activation)
+        self.use_baseline = bool(use_baseline)
 
         # Subaction metadata must exist before validation that references num_dist_per_subaction
         self.auction_item_spec_ids = np.sort(auction_item_spec_ids)
@@ -137,16 +139,20 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
 
         # Critic hidden stack
         self.critic_hidden = []
-        for i in range(self.critic_hidden_layers):
-            self.critic_hidden.append(
-                tf.keras.layers.Dense(
-                    self.critic_hidden_units,
-                    activation=self._critic_hidden_activation_fn,
-                    dtype='float32',
-                    name=f'critic_hidden_{i+1}'
+        if self.use_baseline:
+            for i in range(self.critic_hidden_layers):
+                self.critic_hidden.append(
+                    tf.keras.layers.Dense(
+                        self.critic_hidden_units,
+                        activation=self._critic_hidden_activation_fn,
+                        dtype='float32',
+                        name=f'critic_hidden_{i+1}'
+                    )
                 )
-            )
-        self.critic_out = tf.keras.layers.Dense(1, dtype='float32', name='critic_out')
+            self.critic_out = tf.keras.layers.Dense(1, dtype='float32', name='critic_out')
+        else:
+            # placeholder so attribute exists; not used
+            self.critic_out = None
 
         self._ais_tensor = None
         self._multiplier_add = tf.constant([0.0] * (self.num_dist_per_subaction - 1) + [1.0], dtype=tf.float32)
@@ -194,8 +200,12 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
             f"shape_reward={self.shape_reward}, seed={self.seed}, dist_type={self.dist_type}, actor_final_activation={self._actor_final_activation_name}, "
             f"start_near_bpr={self.start_near_bpr}, sigma_scale={self.sigma_scale}, sigma_floor={self.sigma_floor}, "
             f"actor_depth={self.actor_hidden_layers}, actor_width={self.actor_hidden_units}, actor_act={self._actor_hidden_activation_name}, "
-            f"critic_depth={self.critic_hidden_layers}, critic_width={self.critic_hidden_units}, critic_act={self._critic_hidden_activation_name})"
+            f"use_baseline={self.use_baseline}, critic_depth={self.critic_hidden_layers}, critic_width={self.critic_hidden_units}, critic_act={self._critic_hidden_activation_name})"
         )
+
+    # Provide a human-readable string; identical to __repr__ for now.
+    def __str__(self):  # pragma: no cover - trivial delegation
+        return self.__repr__()
 
     # ---- Validation ----
     def _validate_config(self):
@@ -343,13 +353,16 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
             discounted_rewards = tf.where(discounted_rewards > 0,
                                           tf.math.log(discounted_rewards + 1.0),
                                           discounted_rewards)
-        state_values = tf.reshape(self.value_function(states), (tf.shape(states)[0], -1))
-        baseline = state_values[:, :-1]
-        advantage = discounted_rewards - baseline
+        if self.use_baseline:
+            state_values = tf.reshape(self.value_function(states), (tf.shape(states)[0], -1))
+            baseline = state_values[:, :-1]
+            advantage = discounted_rewards - baseline
+        else:
+            advantage = discounted_rewards
         neg_logs = -log_action_prbs
         neg_logs = tf.clip_by_value(neg_logs, -1e9, 1e9)
         actor_loss = tf.reduce_sum(neg_logs * tf.stop_gradient(advantage))
-        critic_loss = tf.reduce_sum(tf.square(advantage))
+        critic_loss = tf.reduce_sum(tf.square(advantage)) if self.use_baseline else 0.0
         return actor_loss + 0.5 * critic_loss
 
     def update(self, states, actions, rewards, policy_loss, tf_grad_tape=None):

@@ -24,6 +24,7 @@ agents:
       sigma_scale: 0.5
       sigma_floor: 1e-5
       dist_type: gaussian
+      use_baseline: true
   - name: baseline
     policy: FixedBidPolicy
     params:
