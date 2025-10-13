@@ -30,6 +30,7 @@ endif
 # ----------------------------
 
 .PHONY: docker-lockfile docker-build docker-shell docker-run docker-jupyter
+.PHONY: docker-test
 
 # Generate poetry.lock inside Docker only when pyproject.toml changes
 poetry.lock: pyproject.toml
@@ -50,6 +51,15 @@ docker-shell: docker-build
 # Generalized Docker run target
 docker-run:
 	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run $(ARGS)"
+
+# Run pytest inside the Docker image (simple interface).
+# Usage:
+#   make docker-test                              # run entire suite (quiet)
+#   make docker-test TEST=derby/tests/test_utils.py
+#   make docker-test TEST=derby/tests/test_utils.py::TestClass::test_method
+# If you need custom flags occasionally: make docker-run ARGS="pytest -vv -k pattern"
+docker-test: docker-build
+	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run pytest $${TEST:-derby/tests} -q"
 
 # Run Jupyter Lab inside Docker with Poetry env (mounts repo and exposes port)
 docker-jupyter: docker-build
