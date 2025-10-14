@@ -29,40 +29,40 @@ endif
 # Targets
 # ----------------------------
 
-.PHONY: docker-lockfile docker-build docker-shell docker-run docker-jupyter
-.PHONY: docker-test
+.PHONY: lockfile build shell run jupyter
+.PHONY: test
 
 # Generate poetry.lock inside Docker only when pyproject.toml changes
 poetry.lock: pyproject.toml
 	docker run --rm -v "$(PWD_PATH):/app" $(PYTHON_IMAGE) bash -c "cd /app && pip install poetry==2.1.4 && poetry lock"
 
 # Convenience target to force (re)locking regardless of timestamps
-docker-lockfile:
+lockfile:
 	$(MAKE) -B poetry.lock
 
 # Build Docker image (ensure lockfile is up to date first)
-docker-build: poetry.lock
+build: poetry.lock
 	docker build -t derby-app .
 
 # Run container with live code mounting
-docker-shell: docker-build
+shell: build
 	docker run -it --rm -v "$(PWD_PATH):/app" derby-app bash
 
 # Generalized Docker run target
-docker-run:
+run:
 	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run $(ARGS)"
 
 # Run pytest inside the Docker image (simple interface).
 # Usage:
-#   make docker-test                              # run entire suite (quiet)
-#   make docker-test TEST=derby/tests/test_utils.py
-#   make docker-test TEST=derby/tests/test_utils.py::TestClass::test_method
-# If you need custom flags occasionally: make docker-run ARGS="pytest -vv -k pattern"
-docker-test: docker-build
+#   make test                              # run entire suite (quiet)
+#   make test TEST=derby/tests/test_utils.py
+#   make test TEST=derby/tests/test_utils.py::TestClass::test_method
+# If you need custom flags occasionally: make run ARGS="pytest -vv -k pattern"
+test: build
 	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run pytest $${TEST:-derby/tests} -q"
 
 # Run Jupyter Lab inside Docker with Poetry env (mounts repo and exposes port)
-docker-jupyter: docker-build
+jupyter: build
 	docker run --rm -it \
 		-p $(JUPYTER_PORT):8888 \
 		-v "$(PWD_PATH):/app" \
