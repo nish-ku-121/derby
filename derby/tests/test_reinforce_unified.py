@@ -14,18 +14,22 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         self.batch_size = 2
         self.time_steps = 5
         self.state_dim = 4
-        # Deterministic states (zeros) for reproducibility
-        self.states = tf.zeros([self.batch_size, self.time_steps, self.state_dim], dtype=tf.float32)
+        # States for policy_loss should have shape [B, T+1, ...] (initial + T transitions)
+        # For tests, we use T+1 = time_steps for states
+        self.states_for_loss = tf.zeros([self.batch_size, self.time_steps, self.state_dim], dtype=tf.float32)
+        # For call() and choose_actions() tests, use T timesteps
+        self.states = tf.zeros([self.batch_size, self.time_steps - 1, self.state_dim], dtype=tf.float32)
 
     def _assert_mu_sigma_shapes(self, mu, sigma):
-        self.assertEqual(mu.shape, (self.batch_size, self.time_steps, self.num_subactions, self.num_dist))
+        # call() returns params matching input states shape
+        self.assertEqual(mu.shape, (self.batch_size, self.time_steps - 1, self.num_subactions, self.num_dist))
         self.assertEqual(sigma.shape, mu.shape)
         # sigma positivity
         self.assertTrue(tf.reduce_all(sigma > 0).numpy())
 
     def _assert_actions_shape(self, actions_tensor):
         # actions shape: [B, T, num_subactions, 1 + num_dist] (AIS id + dists)
-        expected = (self.batch_size, self.time_steps, self.num_subactions, 1 + self.num_dist)
+        expected = (self.batch_size, self.time_steps - 1, self.num_subactions, 1 + self.num_dist)
         self.assertEqual(actions_tensor.shape, expected)
 
     def test_gaussian_shapes(self):
@@ -43,9 +47,30 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         self._assert_mu_sigma_shapes(mu, sigma)
         actions = policy.choose_actions((mu, sigma))
         self._assert_actions_shape(actions)
-        # value function shape
+        # value function shape (takes any state shape)
         values = policy.value_function(self.states)
-        self.assertEqual(values.shape, (self.batch_size, self.time_steps, 1))
+        self.assertEqual(values.shape, (self.batch_size, self.time_steps - 1, 1))
+
+    def test_gaussian_init_action_value_centers_primary_mu(self):
+        init_action_value = 1.5
+        policy = REINFORCE(
+            auction_item_spec_ids=self.auction_item_spec_ids,
+            num_dist_per_spec=self.num_dist,
+            seed=123,
+            dist_type='gaussian',
+            actor_hidden_layers=1,
+            actor_hidden_units=4,
+            critic_hidden_layers=1,
+            critic_hidden_units=6,
+            init_action_value=init_action_value,
+        )
+        mu, sigma = policy(self.states)
+        self._assert_mu_sigma_shapes(mu, sigma)
+        mean_primary_mu = float(tf.reduce_mean(mu[..., 0]))
+        self.assertAlmostEqual(mean_primary_mu, init_action_value, places=3)
+        # The multiplier channel should remain near its neutral default, not the explicit init value.
+        mean_multiplier_mu = float(tf.reduce_mean(mu[..., -1]))
+        self.assertNotAlmostEqual(mean_multiplier_mu, init_action_value, places=2)
 
     def test_lognormal_shapes_and_mean(self):
         policy = REINFORCE(
@@ -69,6 +94,25 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         mean_mu = float(tf.reduce_mean(mu[..., 0]))
         self.assertTrue(abs(mean_log_sample - mean_mu) < 0.2)
 
+    def test_lognormal_init_action_value_centers_primary_median(self):
+        init_action_value = 2.5
+        policy = REINFORCE(
+            auction_item_spec_ids=self.auction_item_spec_ids,
+            num_dist_per_spec=self.num_dist,
+            seed=321,
+            dist_type='lognormal',
+            actor_hidden_layers=1,
+            actor_hidden_units=4,
+            critic_hidden_layers=1,
+            critic_hidden_units=6,
+            init_action_value=init_action_value,
+        )
+        mu, sigma = policy(self.states)
+        self._assert_mu_sigma_shapes(mu, sigma)
+        # For lognormal, exp(mu) is the distribution median.
+        mean_primary_median = float(tf.reduce_mean(tf.exp(mu[..., 0])))
+        self.assertAlmostEqual(mean_primary_median, init_action_value, places=3)
+
     def test_seed_reproducibility_gaussian(self):
         # Two policies with same seed & states should produce identical actions
         seed = 77
@@ -82,6 +126,56 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         a1 = pol1.choose_actions((mu1, sigma1))
         a2 = pol2.choose_actions((mu2, sigma2))
         self.assertTrue(np.allclose(a1.numpy(), a2.numpy()))
+
+    def test_triangular_shapes_ordering_and_centering(self):
+        init_action_value = 1.5
+        policy = REINFORCE(
+            auction_item_spec_ids=self.auction_item_spec_ids,
+            num_dist_per_spec=self.num_dist,
+            seed=42,
+            dist_type='triangular',
+            actor_hidden_layers=1,
+            actor_hidden_units=4,
+            critic_hidden_layers=1,
+            critic_hidden_units=6,
+            init_action_value=init_action_value,
+        )
+        low, mode, high = policy(self.states)
+        # Shapes (now using self.states which is [B, T-1, ...])
+        expected = (self.batch_size, self.time_steps - 1, self.num_subactions, self.num_dist)
+        self.assertEqual(low.shape, expected)
+        self.assertEqual(mode.shape, expected)
+        self.assertEqual(high.shape, expected)
+        # Non-negativity and ordering
+        self.assertTrue(tf.reduce_all(low >= 0).numpy())
+        self.assertTrue(tf.reduce_all(mode >= low).numpy())
+        self.assertTrue(tf.reduce_all(high >= mode).numpy())
+        # Centering applies to the primary action dimension only.
+        mean_primary_mode = float(tf.reduce_mean(mode[..., 0]))
+        self.assertAlmostEqual(mean_primary_mode, init_action_value, places=3)
+        # Actions shape and non-negativity (values excluding AIS id)
+        actions = policy.choose_actions((low, mode, high))
+        self._assert_actions_shape(actions)
+        self.assertTrue(tf.reduce_all(actions[..., 1:] >= 0).numpy())
+
+    def test_triangular_policy_loss_finite(self):
+        policy = REINFORCE(
+            auction_item_spec_ids=self.auction_item_spec_ids,
+            num_dist_per_spec=self.num_dist,
+            seed=7,
+            dist_type='triangular',
+            actor_hidden_layers=1,
+            actor_hidden_units=4,
+            critic_hidden_layers=1,
+            critic_hidden_units=6,
+            init_action_value=1.0,
+        )
+        # For policy_loss, use states_for_loss [B, T+1, ...], actions/rewards [B, T, ...]
+        low, mode, high = policy(self.states_for_loss[:, :-1])  # get T timesteps of params
+        actions = policy.choose_actions((low, mode, high))
+        rewards = tf.zeros([self.batch_size, self.time_steps - 1], dtype=tf.float32)
+        loss = policy.policy_loss(self.states_for_loss, actions, rewards)
+        self.assertTrue(tf.math.is_finite(loss).numpy())
 
 
 if __name__ == '__main__':
