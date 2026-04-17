@@ -22,16 +22,27 @@ from derby.core.environments import train
 # Module-level logger
 logger = logging.getLogger(__name__)
 
+SUPPORTED_POLICY_NAMES = {
+    "REINFORCE",
+    "FixedBidPolicy",
+    "BudgetPerReachPolicy",
+    "StepPolicy",
+}
+
 
 def _resolve_policy_class(name: str):
     """
-    Resolve a policy class by exact name only.
-    The YAML must provide the full class name as defined in derby.core.policies,
-    for example: REINFORCE_Baseline_Gaussian_v3_1_MarketEnv_Continuous
+    Resolve a policy class from the modern supported surface only.
     """
+    if name not in SUPPORTED_POLICY_NAMES:
+        supported = ", ".join(sorted(SUPPORTED_POLICY_NAMES))
+        raise ValueError(
+            f"Unsupported policy for one_camp_n_days_v2: {name}. "
+            f"Supported policies: {supported}"
+        )
     if hasattr(policy_mod, name):
         return getattr(policy_mod, name)
-    raise ValueError(f"Unknown policy class (must be full name): {name}")
+    raise ValueError(f"Unknown supported policy class: {name}")
 
 
 def _filter_kwargs_for_callable(callable_obj, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -39,6 +50,31 @@ def _filter_kwargs_for_callable(callable_obj, kwargs: Dict[str, Any]) -> Dict[st
     sig = inspect.signature(callable_obj)
     accepted = set(sig.parameters.keys())
     return {k: v for k, v in kwargs.items() if (k in accepted or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()))}
+
+
+def _scale_action_value(actions_scaler, value: float) -> float:
+    """Map an action-space scalar into the policy's scaled action space."""
+    return float(actions_scaler.transform([[float(value)]])[0][0])
+
+
+def _normalize_policy_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize user/config-level policy params without changing their semantics."""
+    normalized = dict(params)
+    for key in ("learning_rate", "init_action_value"):
+        if key in normalized and isinstance(normalized[key], str):
+            try:
+                normalized[key] = float(normalized[key])
+            except ValueError:
+                pass
+    return normalized
+
+
+def _prepare_runtime_policy_params(filtered_params: Dict[str, Any], actions_scaler) -> Dict[str, Any]:
+    """Apply runtime-only transformations before instantiating a policy."""
+    runtime_params = dict(filtered_params)
+    if runtime_params.get('init_action_value') is not None:
+        runtime_params['init_action_value'] = _scale_action_value(actions_scaler, runtime_params['init_action_value'])
+    return runtime_params
 
 
 def _compute_config_hash(config: Dict[str, Any]) -> str:
@@ -96,8 +132,12 @@ def run_experiment_from_config(
     Behavior / Notes:
         - Seeds: If 'seed' present it is validated & passed to Experiment; absent => stochastic run.
         - Policy parameter filtering: only kwargs accepted by the policy __init__ are forwarded.
+        - Supported policies in this runner are limited to unified `REINFORCE` and core deterministic
+          baselines (`FixedBidPolicy`, `BudgetPerReachPolicy`, `StepPolicy`).
         - Auto-injected params (if accepted and not already provided):
-              auction_item_spec_ids, budget_per_reach (scaled average budget-per-reach estimate).
+              auction_item_spec_ids.
+        - `init_action_value` is interpreted in unscaled action space at the config layer; if supplied
+          and accepted by the policy constructor, this runner scales it before instantiating the policy.
         - State/action scaling applied ONLY to TensorFlow (learning) policies; baseline / static
           policies (e.g., FixedBidPolicy) receive raw state/action data to maintain legacy semantics.
         - Per-epoch metrics: mean & std (population, ddof=0) of per-trajectory rewards for each agent.
@@ -145,9 +185,8 @@ def run_experiment_from_config(
     setup_fn = getattr(experiment, setup_name)
     env, auction_item_spec_ids = setup_fn()
 
-    # Get scaling/de-scaling helpers and scaled_avg_bpr
-    scale_states_func, actions_scaler, scale_actions_func, descale_actions_func, scaled_avg_bpr = experiment.get_transformed(env)
-    logger.debug("scaled_avg_bpr=%s", scaled_avg_bpr)
+    # Get scaling/de-scaling helpers.
+    scale_states_func, actions_scaler, scale_actions_func, descale_actions_func, _ = experiment.get_transformed(env)
 
     # Build agents
     agents_cfg: List[Dict[str, Any]] = config['agents']
@@ -162,36 +201,28 @@ def run_experiment_from_config(
         # Determine class and filter params
         policy_cls = _resolve_policy_class(policy_name)
 
-        # Auto-inject common defaults if accepted and not already provided
+        # Auto-inject common defaults if accepted and not already provided.
         auto_defaults: Dict[str, Any] = {
             'auction_item_spec_ids': auction_item_spec_ids,
-            'budget_per_reach': scaled_avg_bpr,
         }
         for k, v in auto_defaults.items():
             params.setdefault(k, v)
 
-        # Normalize common param types to avoid YAML quoting issues
-        if 'learning_rate' in params and isinstance(params['learning_rate'], str):
-            try:
-                params['learning_rate'] = float(params['learning_rate'])
-            except ValueError:
-                pass
+        # Normalize common param types to avoid YAML quoting issues.
+        params = _normalize_policy_params(params)
 
-        # TODO: get rid of this once all policies accept seed
-        # Derive and inject per-policy seed (order-invariant) for targeted policies if global seed present
-        if global_seed is not None and 'seed' not in params and policy_name in {
-            'REINFORCE_Baseline_Gaussian_v2_f32_manual_MarketEnv_Continuous',
-            'REINFORCE_Baseline_Gaussian_v2_MarketEnv_Continuous',
-        }:
-            # Only add if __init__ actually accepts it
+        # Derive and inject per-policy seed (order-invariant) whenever a global seed is set
+        # and the policy accepts a 'seed' parameter but one hasn't been provided in YAML.
+        if global_seed is not None and 'seed' not in params:
             if 'seed' in inspect.signature(policy_cls.__init__).parameters:
                 params['seed'] = _derive_policy_seed(global_seed, policy_name, name)
 
         # Only pass kwargs that the policy's __init__ accepts
         init = policy_cls.__init__
         filtered_params = _filter_kwargs_for_callable(init, params)
+        runtime_params = _prepare_runtime_policy_params(filtered_params, actions_scaler)
 
-        policy_instance = policy_cls(**filtered_params)
+        policy_instance = policy_cls(**runtime_params)
 
         # IMPORTANT:
         # In the legacy experiment scripts, only learning (TF) policies received
