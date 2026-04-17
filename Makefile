@@ -32,9 +32,12 @@ endif
 .PHONY: lockfile build shell run jupyter
 .PHONY: test
 
-# Generate poetry.lock inside Docker only when pyproject.toml changes
+# Generate poetry.lock inside Docker only when pyproject.toml changes.
+# Run poetry lock inside a throwaway container; always 'touch' the lockfile so
+# its timestamp is newer than pyproject.toml even if no changes were needed.
+# This prevents make from rerunning this step on every invocation.
 poetry.lock: pyproject.toml
-	docker run --rm -v "$(PWD_PATH):/app" $(PYTHON_IMAGE) bash -c "cd /app && pip install poetry==2.1.4 && poetry lock"
+	docker run --rm -v "$(PWD_PATH):/app" $(PYTHON_IMAGE) bash -c "cd /app && pip install poetry==2.1.4 && poetry lock && touch poetry.lock"
 
 # Convenience target to force (re)locking regardless of timestamps
 lockfile:
