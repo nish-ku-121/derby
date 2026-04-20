@@ -53,48 +53,18 @@ This project is designed to run using Docker. You only need Docker installed—n
     make build
     ```
 
-## Running Experiments (Outdated)
+## Running Experiments
 
 The Makefile's `run` target automatically executes commands via Poetry inside the container, so you can pass plain `python` commands in `ARGS`.
 
-You can invoke an experiment script in several equivalent ways (pick whichever you find clearest):
-
-1. Module form (preferred; resolves relative imports robustly)
-    ```bash
-    make run ARGS="python -u -m derby.experiments.one_camp_n_days <experiment_name> <num_days> <num_trajs> <num_epochs> <learning_rate>"
-    ```
-2. File path form
-    ```bash
-    make run ARGS="python -u derby/experiments/one_camp_n_days.py <experiment_name> <num_days> <num_trajs> <num_epochs> <learning_rate>"
-    ```
-3. Open an interactive shell then run repeatedly (good for quick loops)
-    ```bash
-    make shell
-    # Now inside container
-    poetry run python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7
-    ```
-4. With explicit environment variables (example: restrict TensorFlow threading)
-    ```bash
-    make run ARGS="TF_NUM_INTEROP_THREADS=1 TF_NUM_INTRAOP_THREADS=1 python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
-    ```
-5. Using a short alias variable for readability (shell feature)
-    ```bash
-    EXP_ARGS="exp_1000 1 200 100 5e-7" ; make run ARGS="python -u -m derby.experiments.one_camp_n_days $EXP_ARGS"
-    ```
-
-Example (module form):
-```bash
-make run ARGS="python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
-```
-
 ### Modern YAML-driven runner (v2)
 
-For new work, prefer the YAML-based runner `derby.experiments.one_camp_n_days_v2`. It consumes a single config dict from a YAML file and logs per-epoch metrics to Parquet.
+For new work, prefer the YAML-based `derby.experiments.one_camp_n_days` package entrypoint. It consumes a single config dict from a YAML file and logs per-epoch metrics to Parquet.
 
 CLI usage:
 ```bash
-make run ARGS="python -u -m derby.experiments.one_camp_n_days_v2 \
-    --config configs/one_camp_n_days_v2_config.yaml \
+make run ARGS="python -u -m derby.experiments.one_camp_n_days \
+    --config configs/one_camp_n_days_config.yaml \
     -o results/test_run \
     --log-level INFO"
 ```
@@ -106,12 +76,12 @@ Key points:
 - `config_hash` is a SHA256 of the config with non-semantic keys (`label`, `logging`) removed; changing the seed changes the hash.
 - Baseline (non-TensorFlow) policies receive raw states/actions; only TensorFlow policies are scaled/normalized.
 
-Minimal YAML example (`configs/one_camp_n_days_v2_config.yaml`) using the unified `REINFORCE` policy (old preset names removed):
+Minimal YAML example (`configs/one_camp_n_days_config.yaml`) using the unified `REINFORCE` policy (old preset names removed):
 ```yaml
 num_days: 1            # days per trajectory
 num_trajs: 200         # trajectories per epoch
 num_epochs: 100        # training epochs
-setup: setup_1         # maps to Experiment.setup_1()
+setup: one_segment
 seed: 123              # optional; remove for stochastic run
 label: tiny-demo       # optional, for easier filtering later
 agents:
@@ -125,10 +95,13 @@ agents:
             critic_hidden_layers: 1
             critic_hidden_units: 8
             actor_final_activation: softplus   # softplus | relu | other TF activations
-            # Optional explicit initialization target in natural action space
-            # init_action_value: 5.0
-            sigma_scale: 0.5                   # multiplicative scale on activated sigma raw
-            sigma_floor: 1e-5                  # added floor after scaling
+            # Optional explicit action-space initialization targets in natural units
+            # init_action_center: 5.0
+            # init_action_stddev: 0.5
+            min_action_stddev: 1e-5           # minimum stddev in natural action units
+            # Optional advanced knob for the parameter-head kernel initializer
+            # Omit to use the framework default.
+            # param_kernel_initializer: glorot_uniform
             dist_type: gaussian                # gaussian | lognormal | triangular (stub)
             shape_reward: false                # if true: advantage shaping via log(1+r)
     - name: baseline
@@ -141,9 +114,9 @@ agents:
 Python / notebook usage (public API):
 ```python
 import yaml
-from derby.experiments.one_camp_n_days_v2 import run_experiment_from_config
+from derby.experiments.one_camp_n_days.runner import run_experiment_from_config
 
-with open("configs/one_camp_n_days_v2_config.yaml", "r", encoding="utf-8") as f:
+with open("configs/one_camp_n_days_config.yaml", "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
 run_id = run_experiment_from_config(
@@ -156,6 +129,8 @@ print("Run ID:", run_id)
 ```
 
 Tip: If you want many variants, use the parallel sweeper below instead of hand-editing multiple YAMLs.
+
+Transition note: legacy experiment scripts and CSV-era utilities still live under `legacy/` during the migration to the new pathway. They are not part of the supported modern workflow and should only be consulted if something critical needs to be recovered while refactoring.
 
 ---
 
@@ -170,8 +145,10 @@ The legacy preset classes (`REINFORCE_PRESET_v1` .. `v4`) have been removed. All
 | `actor_hidden_layers` / `actor_hidden_units` | Depth/width of actor MLP before param head |
 | `critic_hidden_layers` / `critic_hidden_units` | Depth/width of value network |
 | `actor_final_activation` | Activation applied to raw mean/sigma streams (`softplus`, `relu`, etc.) |
-| `init_action_value` | Optional explicit initialization target for the primary action dimension |
-| `sigma_scale` / `sigma_floor` | Unified sigma parameterization: `sigma = scale * act(raw+shift) + floor` |
+| `init_action_center` | Optional explicit initialization target for the primary action dimension, in natural action units |
+| `init_action_stddev` | Optional explicit initial spread target for the primary action dimension, in natural action units |
+| `min_action_stddev` | Minimum standard deviation in natural action units; the runner scales it before policy construction |
+| `param_kernel_initializer` | Optional Keras initializer spec for the parameter-head kernel; omit for framework default |
 | `shape_reward` | If true, applies `log(1+r)` shaping to positive rewards for variance reduction |
 | `seed` | Optional deterministic seed (Python, NumPy, TF generator) |
 
@@ -186,7 +163,7 @@ To replicate an old preset, identify its architecture (depth/width), activation,
 The old `pipeline.parallel_sweep` script is deprecated. Use the new grid expansion + runner pipeline:
 
 1. Author a sweep spec YAML with four top-level sections:
-     - `base`: A single valid experiment config (same schema as `--config` for `one_camp_n_days_v2`).
+     - `base`: A single valid experiment config (same schema as `--config` for `one_camp_n_days`).
      - `grid`: Mapping of dotted-key -> list of values (Cartesian product). Example dotted keys: `agents.0.params.learning_rate`.
      - `overrides` (optional): Dotted-key assignments applied to every expanded config after grid substitution.
      - `restrict` (optional): Integer indices (0-based) to keep from the full product (handy while iterating).
@@ -197,7 +174,7 @@ base:
     num_days: 1
     num_trajs: 200
     num_epochs: 50
-    setup: setup_1
+    setup: one_segment
     seed: 123
     label: unify-reinforce-demo
     agents:
