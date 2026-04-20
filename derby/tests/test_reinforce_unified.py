@@ -51,8 +51,9 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         values = policy.value_function(self.states)
         self.assertEqual(values.shape, (self.batch_size, self.time_steps - 1, 1))
 
-    def test_gaussian_init_action_value_centers_primary_mu(self):
-        init_action_value = 1.5
+    def test_gaussian_action_init_centers_primary_mean_and_stddev(self):
+        init_action_center = 1.5
+        init_action_stddev = 0.3
         policy = REINFORCE(
             auction_item_spec_ids=self.auction_item_spec_ids,
             num_dist_per_spec=self.num_dist,
@@ -62,15 +63,18 @@ class TestUnifiedREINFORCE(unittest.TestCase):
             actor_hidden_units=4,
             critic_hidden_layers=1,
             critic_hidden_units=6,
-            init_action_value=init_action_value,
+            init_action_center=init_action_center,
+            init_action_stddev=init_action_stddev,
         )
         mu, sigma = policy(self.states)
         self._assert_mu_sigma_shapes(mu, sigma)
         mean_primary_mu = float(tf.reduce_mean(mu[..., 0]))
-        self.assertAlmostEqual(mean_primary_mu, init_action_value, places=3)
+        mean_primary_sigma = float(tf.reduce_mean(sigma[..., 0]))
+        self.assertAlmostEqual(mean_primary_mu, init_action_center, places=3)
+        self.assertAlmostEqual(mean_primary_sigma, init_action_stddev, places=3)
         # The multiplier channel should remain near its neutral default, not the explicit init value.
         mean_multiplier_mu = float(tf.reduce_mean(mu[..., -1]))
-        self.assertNotAlmostEqual(mean_multiplier_mu, init_action_value, places=2)
+        self.assertNotAlmostEqual(mean_multiplier_mu, init_action_center, places=2)
 
     def test_lognormal_shapes_and_mean(self):
         policy = REINFORCE(
@@ -94,8 +98,9 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         mean_mu = float(tf.reduce_mean(mu[..., 0]))
         self.assertTrue(abs(mean_log_sample - mean_mu) < 0.2)
 
-    def test_lognormal_init_action_value_centers_primary_median(self):
-        init_action_value = 2.5
+    def test_lognormal_action_init_centers_primary_mean_and_stddev(self):
+        init_action_center = 2.5
+        init_action_stddev = 0.75
         policy = REINFORCE(
             auction_item_spec_ids=self.auction_item_spec_ids,
             num_dist_per_spec=self.num_dist,
@@ -105,13 +110,16 @@ class TestUnifiedREINFORCE(unittest.TestCase):
             actor_hidden_units=4,
             critic_hidden_layers=1,
             critic_hidden_units=6,
-            init_action_value=init_action_value,
+            init_action_center=init_action_center,
+            init_action_stddev=init_action_stddev,
         )
         mu, sigma = policy(self.states)
         self._assert_mu_sigma_shapes(mu, sigma)
-        # For lognormal, exp(mu) is the distribution median.
-        mean_primary_median = float(tf.reduce_mean(tf.exp(mu[..., 0])))
-        self.assertAlmostEqual(mean_primary_median, init_action_value, places=3)
+        implied_mean = tf.exp(mu[..., 0] + 0.5 * tf.square(sigma[..., 0]))
+        implied_var = (tf.exp(tf.square(sigma[..., 0])) - 1.0) * tf.exp(2.0 * mu[..., 0] + tf.square(sigma[..., 0]))
+        implied_stddev = tf.sqrt(implied_var)
+        self.assertAlmostEqual(float(tf.reduce_mean(implied_mean)), init_action_center, places=3)
+        self.assertAlmostEqual(float(tf.reduce_mean(implied_stddev)), init_action_stddev, places=3)
 
     def test_seed_reproducibility_gaussian(self):
         # Two policies with same seed & states should produce identical actions
@@ -128,7 +136,8 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         self.assertTrue(np.allclose(a1.numpy(), a2.numpy()))
 
     def test_triangular_shapes_ordering_and_centering(self):
-        init_action_value = 1.5
+        init_action_center = 1.5
+        init_action_stddev = 0.5
         policy = REINFORCE(
             auction_item_spec_ids=self.auction_item_spec_ids,
             num_dist_per_spec=self.num_dist,
@@ -138,7 +147,8 @@ class TestUnifiedREINFORCE(unittest.TestCase):
             actor_hidden_units=4,
             critic_hidden_layers=1,
             critic_hidden_units=6,
-            init_action_value=init_action_value,
+            init_action_center=init_action_center,
+            init_action_stddev=init_action_stddev,
         )
         low, mode, high = policy(self.states)
         # Shapes (now using self.states which is [B, T-1, ...])
@@ -152,7 +162,10 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         self.assertTrue(tf.reduce_all(high >= mode).numpy())
         # Centering applies to the primary action dimension only.
         mean_primary_mode = float(tf.reduce_mean(mode[..., 0]))
-        self.assertAlmostEqual(mean_primary_mode, init_action_value, places=3)
+        implied_half_width = float(tf.reduce_mean(high[..., 0] - mode[..., 0]))
+        self.assertAlmostEqual(mean_primary_mode, init_action_center, places=3)
+        self.assertAlmostEqual(implied_half_width, init_action_stddev * np.sqrt(6.0), places=3)
+        self.assertAlmostEqual(float(tf.reduce_mean(mode[..., 0] - low[..., 0])), implied_half_width, places=3)
         # Actions shape and non-negativity (values excluding AIS id)
         actions = policy.choose_actions((low, mode, high))
         self._assert_actions_shape(actions)
@@ -168,7 +181,8 @@ class TestUnifiedREINFORCE(unittest.TestCase):
             actor_hidden_units=4,
             critic_hidden_layers=1,
             critic_hidden_units=6,
-            init_action_value=1.0,
+            init_action_center=1.0,
+            init_action_stddev=0.2,
         )
         # For policy_loss, use states_for_loss [B, T+1, ...], actions/rewards [B, T, ...]
         low, mode, high = policy(self.states_for_loss[:, :-1])  # get T timesteps of params

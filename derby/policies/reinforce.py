@@ -24,10 +24,12 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
 
     Args:
         actor_final_activation: str | callable ('softplus' | 'relu' supported for explicit init centering).
-        init_action_value: optional target value for the primary action dimension at initialization.
+        init_action_center: optional target center for the primary action dimension at initialization.
             This is interpreted in the policy's working action space.
-        sigma_scale: multiplicative factor for activated sigma pre-values.
-        sigma_floor: added after scaling (unified default 1e-5).
+        init_action_stddev: optional target stddev for the primary action dimension at initialization.
+            This is interpreted in the policy's working action space.
+        min_action_stddev: minimum stddev added after the sigma activation.
+        param_kernel_initializer: optional Keras initializer spec for the parameter-head kernel.
         actor_hidden_layers / units / activation: MLP depth/width for policy feature extractor (0 => linear head).
         critic_hidden_layers / units / activation: same for value network.
     Notes:
@@ -37,8 +39,10 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
     def __init__(self, auction_item_spec_ids, num_dist_per_spec: int = 2,
                  is_partial: bool = False, discount_factor: float = 1, learning_rate: float = 0.0001,
                  shape_reward: bool = False, seed: int | None = None,
-                 actor_final_activation='softplus', init_action_value: float | None = None,
-                 sigma_scale: float = 0.5, sigma_floor: float = 1e-5,
+                 actor_final_activation='softplus', init_action_center: float | None = None,
+                 init_action_stddev: float | None = None,
+                 min_action_stddev: float = 1e-5,
+                 param_kernel_initializer=None,
                  dist_type: str = 'gaussian',
                  # Network architecture knobs (actor/value)
                  actor_hidden_layers: int = 1, actor_hidden_units: int = 1,
@@ -59,10 +63,11 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
             'relu': lambda B: float(B),
             'softplus': self._inverse_softplus,
         }
-        self.init_action_value = None if init_action_value is None else float(init_action_value)
-        # Unified sigma semantics: always sigma = sigma_scale * activation(raw+shift) + sigma_floor.
-        self.sigma_scale = float(sigma_scale)
-        self.sigma_floor = float(sigma_floor)
+        self.init_action_center = None if init_action_center is None else float(init_action_center)
+        self.init_action_stddev = None if init_action_stddev is None else float(init_action_stddev)
+        # Unified sigma semantics: always sigma = activation(raw_sigma) + min_action_stddev.
+        self.min_action_stddev = float(min_action_stddev)
+        self.param_kernel_initializer = tf.keras.initializers.get(param_kernel_initializer)
         # Store architecture parameters
         self.actor_hidden_layers = int(actor_hidden_layers)
         self.actor_hidden_units = int(actor_hidden_units)
@@ -106,8 +111,6 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
         else:
             raise ValueError(f"Unsupported dist_type '{self.dist_type}'. Choose gaussian | lognormal | triangular")
 
-        # Initializer: small uniform range for stable early exploration.
-        self.param_ker_init = tf.keras.initializers.RandomUniform(minval=-0.1, maxval=0.1)
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
 
         # Actor hidden stack (can be empty if actor_hidden_layers == 0)
@@ -122,30 +125,53 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
                 )
             )
         # Parameter head (fused raw params) always present
-        # Bias initialization optionally centers the primary action dimension.
+        # Bias initialization optionally centers the primary action dimension and its spread.
         param_dim = self._per_dist_param_count * self.num_subactions * self.num_dist_per_subaction
         bias_init = np.zeros(param_dim, dtype=np.float32)
-        if self.init_action_value is not None:
+        if self.init_action_center is not None or self.init_action_stddev is not None:
             if self._actor_final_activation_name not in self._activation_inverse_registry:
                 raise ValueError(
-                    f"init_action_value requires an activation with a registered inverse; "
+                    f"Explicit action initialization requires an activation with a registered inverse; "
                     f"got '{self._actor_final_activation_name}'."
                 )
-            if self.dist_type == 'gaussian':
-                primary_target = self.init_action_value
-            elif self.dist_type == 'lognormal':
-                primary_target = math.log(self.init_action_value)
-            elif self.dist_type == 'triangular':
-                primary_target = self.init_action_value
-            else:  # pragma: no cover
-                raise ValueError(f"Unknown dist_type '{self.dist_type}' for bias initialization.")
-            primary_bias = self._activation_inverse_registry[self._actor_final_activation_name](primary_target)
+            inv = self._activation_inverse_registry[self._actor_final_activation_name]
             for i in range(self.num_subactions):
-                idx = i * self.num_dist_per_subaction * self._per_dist_param_count
-                bias_init[idx] = primary_bias
+                block_start = i * self.num_dist_per_subaction * self._per_dist_param_count
+                # Only initialize the primary action channel; leave the multiplier channel neutral.
+                if self.dist_type == 'gaussian':
+                    if self.init_action_center is not None:
+                        bias_init[block_start] = inv(self.init_action_center)
+                    if self.init_action_stddev is not None:
+                        sigma_target = self.init_action_stddev - self.min_action_stddev
+                        bias_init[block_start + 1] = inv(sigma_target)
+                elif self.dist_type == 'lognormal':
+                    if self.init_action_center is not None:
+                        latent_mu, latent_sigma = self._lognormal_action_moments_to_latent(
+                            self.init_action_center,
+                            self.init_action_stddev,
+                        )
+                        bias_init[block_start] = inv(latent_mu)
+                        if self.init_action_stddev is not None:
+                            sigma_floor = self._lognormal_min_latent_sigma_for_action_stddev_scalar(
+                                self.min_action_stddev,
+                                latent_mu,
+                            )
+                            sigma_target = latent_sigma - sigma_floor
+                            bias_init[block_start + 1] = inv(sigma_target)
+                elif self.dist_type == 'triangular':
+                    if self.init_action_center is not None:
+                        bias_init[block_start] = inv(self.init_action_center)
+                    if self.init_action_stddev is not None:
+                        min_half_width = self.min_action_stddev * math.sqrt(6.0)
+                        symmetric_half_width = self.init_action_stddev * math.sqrt(6.0)
+                        span_target = symmetric_half_width - min_half_width
+                        bias_init[block_start + 1] = inv(span_target)
+                        bias_init[block_start + 2] = inv(span_target)
+                else:  # pragma: no cover
+                    raise ValueError(f"Unknown dist_type '{self.dist_type}' for bias initialization.")
         self.param_layer = tf.keras.layers.Dense(
             param_dim,
-            kernel_initializer=self.param_ker_init,
+            kernel_initializer=self.param_kernel_initializer,
             bias_initializer=tf.constant_initializer(bias_init),
             activation=None,
             dtype='float32',
@@ -182,10 +208,41 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
     def _inverse_softplus(B: float) -> float:
         B = float(B)
         if B <= 0.0:
-            return 0.0
+            # softplus never reaches 0 exactly; use a large negative raw value as a practical proxy
+            return -20.0
         if B < 20.0:
             return math.log(math.expm1(B))
         return B + math.log1p(-math.exp(-B))
+
+    @staticmethod
+    def _lognormal_action_moments_to_latent(action_mean: float, action_stddev: float | None) -> tuple[float, float]:
+        """Convert action-space mean/stddev to the latent normal parameters."""
+        mean = float(action_mean)
+        stddev = 0.0 if action_stddev is None else float(action_stddev)
+        variance_ratio = (stddev * stddev) / (mean * mean)
+        latent_sigma_sq = math.log1p(variance_ratio)
+        latent_sigma = math.sqrt(latent_sigma_sq)
+        latent_mu = math.log(mean) - 0.5 * latent_sigma_sq
+        return latent_mu, latent_sigma
+
+    @staticmethod
+    def _lognormal_min_latent_sigma_for_action_stddev_scalar(action_stddev: float, latent_mu: float) -> float:
+        """Map an action-space stddev floor to the corresponding latent sigma floor at a given latent mu."""
+        action_stddev = float(action_stddev)
+        latent_mu = float(latent_mu)
+        if action_stddev <= 0.0:
+            return 0.0
+        z = 0.5 * (1.0 + math.sqrt(1.0 + 4.0 * (action_stddev ** 2) * math.exp(-2.0 * latent_mu)))
+        return math.sqrt(max(math.log(z), 0.0))
+
+    @staticmethod
+    def _lognormal_min_latent_sigma_for_action_stddev_tensor(action_stddev: float, latent_mu: tf.Tensor) -> tf.Tensor:
+        """Tensor version of the action-space stddev floor conversion for lognormal policies."""
+        if action_stddev <= 0.0:
+            return tf.zeros_like(latent_mu)
+        action_stddev_t = tf.cast(action_stddev, latent_mu.dtype)
+        z = 0.5 * (1.0 + tf.sqrt(1.0 + 4.0 * tf.square(action_stddev_t) * tf.exp(-2.0 * latent_mu)))
+        return tf.sqrt(tf.maximum(tf.math.log(z), 0.0))
 
     @staticmethod
     def _resolve_activation(act):
@@ -213,7 +270,8 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
             f"is_partial={self.is_partial}, discount={self.discount_factor}, "
             f"lr={self.learning_rate}, num_actions={self.num_subactions}, optimizer={type(self.optimizer).__name__}, "
             f"shape_reward={self.shape_reward}, seed={self.seed}, dist_type={self.dist_type}, actor_final_activation={self._actor_final_activation_name}, "
-            f"init_action_value={self.init_action_value}, sigma_scale={self.sigma_scale}, sigma_floor={self.sigma_floor}, "
+            f"init_action_center={self.init_action_center}, init_action_stddev={self.init_action_stddev}, "
+            f"min_action_stddev={self.min_action_stddev}, "
             f"actor_depth={self.actor_hidden_layers}, actor_width={self.actor_hidden_units}, actor_act={self._actor_hidden_activation_name}, "
             f"use_baseline={self.use_baseline}, critic_depth={self.critic_hidden_layers}, critic_width={self.critic_hidden_units}, critic_act={self._critic_hidden_activation_name})"
         )
@@ -239,18 +297,36 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
             raise ValueError("actor_hidden_units must be >= 1")
         if self.critic_hidden_units < 1:
             raise ValueError("critic_hidden_units must be >= 1")
-        if self.sigma_scale <= 0:
-            raise ValueError("sigma_scale must be > 0")
-        if self.sigma_floor < 0:
-            raise ValueError("sigma_floor must be >= 0")
+        if self.min_action_stddev < 0:
+            raise ValueError("min_action_stddev must be >= 0")
         if self.num_dist_per_subaction < 1:
             raise ValueError("num_dist_per_spec must be >= 1")
-        if self.init_action_value is not None and self.init_action_value < 0:
-            raise ValueError("init_action_value must be >= 0")
-        if self.dist_type == 'lognormal' and self.init_action_value is not None and self.init_action_value <= 1.0:
+        if self.init_action_center is not None and self.init_action_center < 0:
+            raise ValueError("init_action_center must be >= 0")
+        if self.init_action_stddev is not None and self.init_action_stddev < 0:
+            raise ValueError("init_action_stddev must be >= 0")
+        if self.init_action_stddev is not None and self.init_action_stddev < self.min_action_stddev:
+            raise ValueError("init_action_stddev must be >= min_action_stddev")
+        if self.dist_type == 'lognormal':
+            if self.init_action_center is not None and self.init_action_center <= 0.0:
+                raise ValueError("lognormal init_action_center must be > 0")
+            if self.init_action_stddev is not None and self.init_action_center is None:
+                raise ValueError("lognormal init_action_stddev requires init_action_center")
+            if self.init_action_center is not None and self.init_action_stddev is None:
+                raise ValueError(
+                    "lognormal action-space initialization requires both init_action_center and init_action_stddev"
+                )
+        if self.dist_type == 'triangular' and self.init_action_center is None and self.init_action_stddev is not None:
+            raise ValueError("triangular init_action_stddev requires init_action_center")
+        if (
+            self.dist_type == 'triangular'
+            and self.init_action_center is not None
+            and self.init_action_stddev is not None
+            and self.init_action_center - (self.init_action_stddev * math.sqrt(6.0)) < 0.0
+        ):
             raise ValueError(
-                "lognormal init_action_value must be > 1.0 because the current positive final-activation "
-                "parameterization initializes the underlying normal mean in nonnegative space."
+                "triangular init_action_stddev is too large for the requested init_action_center; "
+                "the implied symmetric low endpoint would be negative"
             )
 
     # Fold types
@@ -295,15 +371,23 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
             raw_sigma = params[..., 1]
             mu = self._actor_final_activation_fn(raw_mu)
             sigma_pre = self._actor_final_activation_fn(raw_sigma)
-            sigma = (self.sigma_scale * sigma_pre) + self.sigma_floor
+            if self.dist_type == 'gaussian':
+                sigma = sigma_pre + self.min_action_stddev
+            else:
+                sigma_floor = self._lognormal_min_latent_sigma_for_action_stddev_tensor(
+                    self.min_action_stddev,
+                    mu,
+                )
+                sigma = sigma_pre + sigma_floor
             return (mu, sigma)
         if self.dist_type == 'triangular':
             a = params[..., 0]
             b = params[..., 1]
             c = params[..., 2]
             center = self._actor_final_activation_fn(a)
-            left_span = self._actor_final_activation_fn(b)
-            right_span = self._actor_final_activation_fn(c)
+            min_half_width = self.min_action_stddev * math.sqrt(6.0)
+            left_span = self._actor_final_activation_fn(b) + min_half_width
+            right_span = self._actor_final_activation_fn(c) + min_half_width
             low = center - left_span
             mode = center
             high = center + right_span
