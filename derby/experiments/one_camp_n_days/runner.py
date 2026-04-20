@@ -14,7 +14,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import tensorflow as tf
  
-from derby.experiments.one_camp_n_days import Experiment
+from derby.experiments.one_camp_n_days.experiment import OneCampNDaysExperiment
 from derby.core.agents import Agent
 import derby.core.policies as policy_mod
 from derby.core.environments import train
@@ -22,11 +22,21 @@ from derby.core.environments import train
 # Module-level logger
 logger = logging.getLogger(__name__)
 
+# TODO(new-paradigm): This runner is intentionally scoped to the
+# one-campaign-N-days experiment family for now. If we add a second modern
+# experiment family, revisit whether the config/orchestration pieces here
+# should be extracted into a reusable generic runner layer.
+
 SUPPORTED_POLICY_NAMES = {
     "REINFORCE",
     "FixedBidPolicy",
     "BudgetPerReachPolicy",
     "StepPolicy",
+}
+
+SUPPORTED_SETUPS = {
+    "one_segment": "build_one_segment_setup",
+    "two_segment": "build_two_segment_setup",
 }
 
 
@@ -37,12 +47,23 @@ def _resolve_policy_class(name: str):
     if name not in SUPPORTED_POLICY_NAMES:
         supported = ", ".join(sorted(SUPPORTED_POLICY_NAMES))
         raise ValueError(
-            f"Unsupported policy for one_camp_n_days_v2: {name}. "
+            f"Unsupported policy for one_camp_n_days runner: {name}. "
             f"Supported policies: {supported}"
         )
     if hasattr(policy_mod, name):
         return getattr(policy_mod, name)
     raise ValueError(f"Unknown supported policy class: {name}")
+
+
+def _resolve_setup_function(experiment: OneCampNDaysExperiment, setup_name: str):
+    """Resolve a user-facing setup name to the corresponding experiment factory."""
+    method_name = SUPPORTED_SETUPS.get(setup_name)
+    if method_name is None:
+        supported = ", ".join(sorted(SUPPORTED_SETUPS))
+        raise ValueError(
+            f"Unknown setup: {setup_name}. Supported setups: {supported}"
+        )
+    return setup_name, getattr(experiment, method_name)
 
 
 def _filter_kwargs_for_callable(callable_obj, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -52,15 +73,22 @@ def _filter_kwargs_for_callable(callable_obj, kwargs: Dict[str, Any]) -> Dict[st
     return {k: v for k, v in kwargs.items() if (k in accepted or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()))}
 
 
-def _scale_action_value(actions_scaler, value: float) -> float:
-    """Map an action-space scalar into the policy's scaled action space."""
+def _scale_natural_action_scalar(actions_scaler, value: float) -> float:
+    """Map a natural action-space scalar into the policy's scaled action space."""
     return float(actions_scaler.transform([[float(value)]])[0][0])
+
+
+NATURAL_ACTION_SPACE_PARAM_KEYS = frozenset({
+    "init_action_center",
+    "init_action_stddev",
+    "min_action_stddev",
+})
 
 
 def _normalize_policy_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize user/config-level policy params without changing their semantics."""
     normalized = dict(params)
-    for key in ("learning_rate", "init_action_value"):
+    for key in ("learning_rate", *NATURAL_ACTION_SPACE_PARAM_KEYS):
         if key in normalized and isinstance(normalized[key], str):
             try:
                 normalized[key] = float(normalized[key])
@@ -72,8 +100,9 @@ def _normalize_policy_params(params: Dict[str, Any]) -> Dict[str, Any]:
 def _prepare_runtime_policy_params(filtered_params: Dict[str, Any], actions_scaler) -> Dict[str, Any]:
     """Apply runtime-only transformations before instantiating a policy."""
     runtime_params = dict(filtered_params)
-    if runtime_params.get('init_action_value') is not None:
-        runtime_params['init_action_value'] = _scale_action_value(actions_scaler, runtime_params['init_action_value'])
+    for key in NATURAL_ACTION_SPACE_PARAM_KEYS:
+        if runtime_params.get(key) is not None:
+            runtime_params[key] = _scale_natural_action_scalar(actions_scaler, runtime_params[key])
     return runtime_params
 
 
@@ -114,7 +143,8 @@ def run_experiment_from_config(
         num_days: int                    # days per trajectory (episode length / horizon)
         num_trajs: int                   # trajectories (episodes) per epoch
         num_epochs: int                  # number of training epochs
-        setup: setup_1 | setup_2         # name of Experiment.setup_* method
+        setup: one_segment | two_segment
+                                         # user-facing scenario name
         seed: int (optional)             # reproducibility seed (YAML ONLY; no CLI override)
         label: str (optional)            # carried through to parquet output (excluded from hash)
         agents:                          # list in execution order
@@ -130,14 +160,16 @@ def run_experiment_from_config(
                   total_limit: 5
 
     Behavior / Notes:
-        - Seeds: If 'seed' present it is validated & passed to Experiment; absent => stochastic run.
+        - Seeds: If 'seed' present it is validated & passed to `OneCampNDaysExperiment`; absent => stochastic run.
         - Policy parameter filtering: only kwargs accepted by the policy __init__ are forwarded.
         - Supported policies in this runner are limited to unified `REINFORCE` and core deterministic
           baselines (`FixedBidPolicy`, `BudgetPerReachPolicy`, `StepPolicy`).
         - Auto-injected params (if accepted and not already provided):
               auction_item_spec_ids.
-        - `init_action_value` is interpreted in unscaled action space at the config layer; if supplied
-          and accepted by the policy constructor, this runner scales it before instantiating the policy.
+        - Natural action-space scalar params such as `init_action_center`, `init_action_stddev`,
+          and `min_action_stddev` are interpreted
+          in unscaled action space at the config layer; if supplied and accepted by the policy constructor,
+          this runner scales them before instantiating the policy.
         - State/action scaling applied ONLY to TensorFlow (learning) policies; baseline / static
           policies (e.g., FixedBidPolicy) receive raw state/action data to maintain legacy semantics.
         - Per-epoch metrics: mean & std (population, ddof=0) of per-trajectory rewards for each agent.
@@ -174,19 +206,22 @@ def run_experiment_from_config(
         global_seed = int(yaml_seed)
         _seed_everything(global_seed)
 
-    experiment = Experiment(seed=global_seed)
+    experiment = OneCampNDaysExperiment(seed=global_seed)
 
     # Choose environment setup
-    setup_name = config.get('setup')  # full function name like 'setup_1'
+    setup_name = config.get('setup')
     if not isinstance(setup_name, str):
-        raise ValueError("Missing or invalid 'setup' key. Provide the function name, e.g., setup_1 or setup_2.")
-    if not hasattr(experiment, setup_name):
-        raise ValueError(f"Unknown setup function: {setup_name}")
-    setup_fn = getattr(experiment, setup_name)
+        raise ValueError(
+            "Missing or invalid 'setup' key. Provide one of: "
+            + ", ".join(sorted(SUPPORTED_SETUPS))
+        )
+    setup_name, setup_fn = _resolve_setup_function(experiment, setup_name)
     env, auction_item_spec_ids = setup_fn()
 
     # Get scaling/de-scaling helpers.
-    scale_states_func, actions_scaler, scale_actions_func, descale_actions_func, _ = experiment.get_transformed(env)
+    scale_states_func, actions_scaler, scale_actions_func, descale_actions_func = (
+        experiment.build_env_transforms(env)
+    )
 
     # Build agents
     agents_cfg: List[Dict[str, Any]] = config['agents']
@@ -247,7 +282,7 @@ def run_experiment_from_config(
         if global_seed is not None and hasattr(policy_instance, 'seed'):
             logger.info(f"[seed] policy={policy_name} agent={name} seed={getattr(policy_instance,'seed', None)}")
 
-    # Train loop (mirrors Experiment.run but allows logging per epoch)
+    # Train loop (mirrors the legacy experiment runner but allows logging per epoch)
     num_of_days = num_days
     num_of_trajs = num_trajs
     NUM_EPOCHS = num_epochs
