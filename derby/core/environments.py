@@ -363,16 +363,10 @@ class MarketEnv(AbstractEnvironment):
                 try:
                     auction_item_spec = auction_item_specs_by_id[auction_item_spec_id]
                 except KeyError as e:
-                    # Fallback: align by subaction index if ID is unknown.
-                    # Many policies emit subactions in the same sorted order as auction_item_spec_ids.
-                    # If the provided ID isn't recognized (e.g., due to cross-run UID drift),
-                    # map j-th subaction to the j-th available spec ID deterministically.
                     available = sorted(list(auction_item_specs_by_id.keys()))
-                    if 0 <= j < len(available):
-                        fallback_id = available[j]
-                        auction_item_spec = auction_item_specs_by_id[fallback_id]
-                    else:
-                        raise KeyError(f"Unknown auction_item_spec_id {auction_item_spec_id}; available IDs: {available}") from e
+                    raise KeyError(
+                        f"Unknown auction_item_spec_id {auction_item_spec_id}; available IDs: {available}"
+                    ) from e
                 bid_obj = Bid.from_vector(bid_j_of_agent_i, bidder, auction_item_spec)
                 agent_i_bids.append(bid_obj)
             bids.append(agent_i_bids)
