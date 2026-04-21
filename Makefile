@@ -8,6 +8,11 @@ PYTHON_IMAGE ?= python:3.10-slim
 # Host port to expose Jupyter on (container still listens on 8888)
 JUPYTER_PORT ?= 8888
 
+# Default pytest target. Can be overridden with:
+#   make test TEST=derby/tests/test_utils.py
+#   make test TEST=derby/tests/test_utils.py::TestUtils::test_kth_largest_1
+TEST ?= derby/tests
+
 # Detect platform
 UNAME_S := $(shell uname -s)
 
@@ -62,7 +67,7 @@ run:
 #   make test TEST=derby/tests/test_utils.py::TestClass::test_method
 # If you need custom flags occasionally: make run ARGS="pytest -vv -k pattern"
 test: build
-	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run pytest $${TEST:-derby/tests} -q"
+	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run pytest '$(TEST)' -q"
 
 # Run Jupyter Lab inside Docker with Poetry env (mounts repo and exposes port)
 jupyter: build
