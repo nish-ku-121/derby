@@ -64,8 +64,8 @@ For new work, prefer the YAML-based `derby.experiments.one_camp_n_days` package 
 CLI usage:
 ```bash
 make run ARGS="python -u -m derby.experiments.one_camp_n_days \
-    --config configs/one_camp_n_days_config.yaml \
-    -o results/test_run \
+    --config configs/one_camp_n_days_base.yaml \
+    --output-dir results/test_run \
     --log-level INFO"
 ```
 
@@ -76,7 +76,7 @@ Key points:
 - `config_hash` is a SHA256 of the config with non-semantic keys (`label`, `logging`) removed; changing the seed changes the hash.
 - Baseline (non-TensorFlow) policies receive raw states/actions; only TensorFlow policies are scaled/normalized.
 
-Minimal YAML example (`configs/one_camp_n_days_config.yaml`) using the unified `REINFORCE` policy (old preset names removed):
+Minimal base config example (`configs/one_camp_n_days_base.yaml`) using the unified `REINFORCE` policy (old preset names removed):
 ```yaml
 num_days: 1            # days per trajectory
 num_trajs: 200         # trajectories per epoch
@@ -116,7 +116,7 @@ Python / notebook usage (public API):
 import yaml
 from derby.experiments.one_camp_n_days.runner import run_experiment_from_config
 
-with open("configs/one_camp_n_days_config.yaml", "r", encoding="utf-8") as f:
+with open("configs/one_camp_n_days_base.yaml", "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
 run_id = run_experiment_from_config(
@@ -160,64 +160,53 @@ To replicate an old preset, identify its architecture (depth/width), activation,
 
 ## Parameter Sweeps (modern two-step workflow)
 
-The old `pipeline.parallel_sweep` script is deprecated. Use the new grid expansion + runner pipeline:
+The old `pipeline.parallel_sweep` script is deprecated. Use the new config-grid + sweep-runner pipeline:
 
-1. Author a sweep spec YAML with four top-level sections:
-     - `base`: A single valid experiment config (same schema as `--config` for `one_camp_n_days`).
-     - `grid`: Mapping of dotted-key -> list of values (Cartesian product). Example dotted keys: `agents.0.params.learning_rate`.
-     - `overrides` (optional): Dotted-key assignments applied to every expanded config after grid substitution.
-     - `restrict` (optional): Integer indices (0-based) to keep from the full product (handy while iterating).
+1. Author two YAML files:
+     - A base experiment config: one valid experiment run config.
+     - A sweep spec: a higher-level recipe that points to a `base_config` and defines `grid`, `override`, and optional `restrict` / `label_template` fields.
 
-Example spec (`configs/reinforce_unified_sweepspec.yaml`):
+Example sweep spec (`configs/reinforce_unified_sweep.yaml`):
 ```yaml
-base:
-    num_days: 1
-    num_trajs: 200
-    num_epochs: 50
-    setup: one_segment
-    seed: 123
-    label: unify-reinforce-demo
-    agents:
-        - name: learner
-            policy: REINFORCE
-            params:
-                learning_rate: 5e-7
-                actor_hidden_layers: 1
-                actor_hidden_units: 8
-                critic_hidden_layers: 1
-                critic_hidden_units: 8
-                dist_type: gaussian
-        - name: baseline
-            policy: FixedBidPolicy
-            params:
-                bid_per_item: 5
-                total_limit: 5
+sweep_name: reinforce_unified_demo
+base_config: configs/one_camp_n_days_base.yaml
+override:
+    num_trajs: 50
+    num_epochs: 100
 grid:
     agents.0.params.learning_rate: [5e-7, 1e-6]
     agents.0.params.dist_type: [gaussian, lognormal]
     agents.0.params.actor_hidden_units: [8, 16]
-overrides: {}
-restrict: null
+restrict:
+    # max_combinations: 32
+label_template: "{agents.0.policy}|Baseline={agents.0.params.use_baseline}|D={agents.0.params.dist_type}|A={agents.0.params.actor_hidden_layers}x{agents.0.params.actor_hidden_units}|C={agents.0.params.critic_hidden_layers}x{agents.0.params.critic_hidden_units}|Act={agents.0.params.actor_hidden_activation}>{agents.0.params.actor_final_activation}"
 ```
 
 2. Generate concrete configs:
 ```bash
-make run ARGS="python -u -m pipeline.make_grid --spec configs/reinforce_unified_sweepspec.yaml --configs-dir sweeps/reinforce_unified/configs"
+make run ARGS="python -u -m pipeline.make_config_grid --spec configs/reinforce_unified_sweep.yaml --output-dir sweeps/reinforce_unified_demo/configs"
 ```
-This produces `sweeps/reinforce_unified/configs/*.yaml` (one per combination) plus a summary JSON.
+This produces `sweeps/reinforce_unified_demo/configs/*.yaml` (one per combination).
 
 3. Execute configs sequentially or in parallel:
 ```bash
 # Parallel (4 workers)
-make run ARGS="python -u -m pipeline.run_configs --configs sweeps/reinforce_unified/configs --output results/reinforce_unified --parallel 4"
+make run ARGS="python -u -m pipeline.run_experiment_sweep --configs-dir sweeps/reinforce_unified_demo/configs --experiment-module derby.experiments.one_camp_n_days --output-dir results/reinforce_unified_demo --parallel 4"
 
 # Dry-run (print commands only)
-make run ARGS="python -u -m pipeline.run_configs --configs sweeps/reinforce_unified/configs --output results/reinforce_unified --dry-run"
+make run ARGS="python -u -m pipeline.run_experiment_sweep --configs-dir sweeps/reinforce_unified_demo/configs --experiment-module derby.experiments.one_camp_n_days --output-dir results/reinforce_unified_demo --dry-run"
 ```
 
 Behavior & features:
-- Each generated config gets its own subdirectory under the chosen `--output` path; a stamp file `_RUN_COMPLETE.stamp` prevents accidental re-runs unless `--force` is set.
-- Labels default to the base config's `label` plus an index; customize per-run by injecting `label` via grid if needed.
+- Each generated config gets its own subdirectory under the chosen `--output-dir` path; a completion record `_RUN_COMPLETE.json` marks a successfully completed run and causes later invocations to skip that config.
+- The sweep runner is resumable and non-destructive. It only advances missing or empty run directories toward completion; completed directories are skipped.
+- If a per-config run directory is non-empty but has no `_RUN_COMPLETE.json`, the sweep fails during preflight before starting any runs. Inspect/delete/move that directory or choose a new `--output-dir`.
+- The sweep runner prints `START`, `DONE`, and periodic `STATUS` lines while runs are active. Use `--status-interval <seconds>` to change the heartbeat cadence, or `--status-interval 0` to disable it.
+- Generated config labels default to the base config's `label` plus the generated run index, or just `run_<index>` if the base config has no label. If you want labels to encode swept parameters, provide a `label_template` in the sweep spec.
+- `label_template` placeholders are resolved from full generated-config dotted paths. For multi-agent sweeps, reference the intended agent explicitly, such as `{agents.0.params.dist_type}` or `{agents.1.params.learning_rate}`.
+- The sweep manifest is written to `run_summary.json` in the chosen output root. It records the per-run results plus the `configs_dir`, `experiment_module`, output root, wall-clock timing, and summary counts.
+- If every config is skipped because completion records already exist, `run_summary.json` is not written or modified because no output state changed.
+- Failed or errored runs also get a per-run `failure.json` in their run directory with the captured error details.
 - Failures return a JSON summary (use `--json` for machine-readable output).
 
 Migration note: existing workflows using `parallel_sweep.py` still work temporarily but will be removed; switch to the above pattern.
@@ -228,8 +217,8 @@ Migration note: existing workflows using `parallel_sweep.py` still work temporar
 
 - `derby/` — core library (environments, agents, auctions, markets, policies, utils)
 - `pipeline/` — modern, process-based runners and tools
-    - `make_grid.py` — expand a sweep spec YAML into concrete config files
-    - `run_configs.py` — run a directory of generated configs (parallel or sequential)
+    - `make_config_grid.py` — expand a sweep spec YAML into concrete experiment config files
+    - `run_experiment_sweep.py` — run a directory of generated configs against an experiment module
     - `parallel_sweep.py` — (deprecated) legacy single-step Cartesian sweeper
 - `utils/` — reusable helpers for analysis and plotting
     - `epoch_agg_loader.py` — list/load per-epoch Parquet files; basic policy summaries
