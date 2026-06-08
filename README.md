@@ -52,6 +52,8 @@ This project is designed to run using Docker. You only need Docker installed—n
     ```bash
     make build
     ```
+    Re-run `make build` after changing `Dockerfile`, `pyproject.toml`, or `poetry.lock`.
+    Normal source edits are mounted into the container, so `make run` and `make test` use the existing image.
 
 ## Running Experiments
 
@@ -72,8 +74,8 @@ make run ARGS="python -u -m derby.experiments.one_camp_n_days \
 Key points:
 - Seed (if you want reproducibility) must be specified ONLY inside the YAML as `seed:`. There is no CLI override.
 - Output directory (`-o/--output-dir`) is optional; if provided, a Parquet file `epoch_agg__<run_id>.parquet` is written there containing one row per (epoch, agent).
-- Each row includes: `run_id`, `config_hash`, `seed`, `label` (if provided), per-agent mean/std reward, and core config fields.
-- `config_hash` is a SHA256 of the config with non-semantic keys (`label`, `logging`) removed; changing the seed changes the hash.
+- Each row includes: `run_id`, `config_hash`, `global_seed`, `agent_label`, per-agent mean/std reward, and core config fields.
+- `config_hash` is a SHA256 of the config with non-semantic keys (`label`, `logging`) removed recursively; changing the seed changes the hash.
 - Baseline (non-TensorFlow) policies receive raw states/actions; only TensorFlow policies are scaled/normalized.
 
 Minimal base config example (`configs/one_camp_n_days_base.yaml`) using the unified `REINFORCE` policy (old preset names removed):
@@ -83,32 +85,33 @@ num_trajs: 200         # trajectories per epoch
 num_epochs: 100        # training epochs
 setup: one_segment
 seed: 123              # optional; remove for stochastic run
-label: tiny-demo       # optional, for easier filtering later
 agents:
-    - name: learner
-        policy: REINFORCE            # unified class (no more REINFORCE_PRESET_v*)
-        params:
-            learning_rate: 5e-7
-            # Common knobs (override as needed) ----------------------------------
-            actor_hidden_layers: 1     # 0 => no hidden layers before param head
-            actor_hidden_units: 8
-            critic_hidden_layers: 1
-            critic_hidden_units: 8
-            actor_final_activation: softplus   # softplus | relu | other TF activations
-            # Optional explicit action-space initialization targets in natural units
-            # init_action_center: 5.0
-            # init_action_stddev: 0.5
-            min_action_stddev: 1e-5           # minimum stddev in natural action units
-            # Optional advanced knob for the parameter-head kernel initializer
-            # Omit to use the framework default.
-            # param_kernel_initializer: glorot_uniform
-            dist_type: gaussian                # gaussian | lognormal | triangular (stub)
-            shape_reward: false                # if true: advantage shaping via log(1+r)
-    - name: baseline
-        policy: FixedBidPolicy
-        params:
-            bid_per_item: 5
-            total_limit: 5
+  - name: learner
+    label: REINFORCE
+    policy: REINFORCE            # unified class (no more REINFORCE_PRESET_v*)
+    params:
+      learning_rate: 5e-7
+      # Common knobs (override as needed) ----------------------------------
+      actor_hidden_layers: 1     # 0 => no hidden layers before param head
+      actor_hidden_units: 8
+      critic_hidden_layers: 1
+      critic_hidden_units: 8
+      actor_final_activation: softplus   # softplus | relu | other TF activations
+      # Optional explicit action-space initialization targets in natural units
+      # init_action_center: 5.0
+      # init_action_stddev: 0.5
+      min_action_stddev: 1e-5           # minimum stddev in natural action units
+      # Optional advanced knob for the parameter-head kernel initializer
+      # Omit to use the framework default.
+      # param_kernel_initializer: glorot_uniform
+      dist_type: gaussian                # gaussian | lognormal | triangular (stub)
+      shape_reward: false                # if true: advantage shaping via log(1+r)
+  - name: baseline
+    label: FixedBid|Bid={agents.1.params.bid_per_item}|Limit={agents.1.params.total_limit}
+    policy: FixedBidPolicy
+    params:
+      bid_per_item: 5
+      total_limit: 5
 ```
 
 Python / notebook usage (public API):
@@ -164,7 +167,7 @@ The old `pipeline.parallel_sweep` script is deprecated. Use the new config-grid 
 
 1. Author two YAML files:
      - A base experiment config: one valid experiment run config.
-     - A sweep spec: a higher-level recipe that points to a `base_config` and defines `grid`, `override`, and optional `restrict` / `label_template` fields.
+     - A sweep spec: a higher-level recipe that points to a `base_config` and defines `grid`, `override`, and optional `restrict` fields.
 
 Example sweep spec (`configs/reinforce_unified_sweep.yaml`):
 ```yaml
@@ -173,13 +176,13 @@ base_config: configs/one_camp_n_days_base.yaml
 override:
     num_trajs: 50
     num_epochs: 100
+    agents.0.label: "REINFORCE|Baseline={agents.0.params.use_baseline}|D={agents.0.params.dist_type}|A={agents.0.params.actor_hidden_layers}x{agents.0.params.actor_hidden_units}|C={agents.0.params.critic_hidden_layers}x{agents.0.params.critic_hidden_units}|Act={agents.0.params.actor_hidden_activation}>{agents.0.params.actor_final_activation}"
 grid:
     agents.0.params.learning_rate: [5e-7, 1e-6]
     agents.0.params.dist_type: [gaussian, lognormal]
     agents.0.params.actor_hidden_units: [8, 16]
 restrict:
     # max_combinations: 32
-label_template: "{agents.0.policy}|Baseline={agents.0.params.use_baseline}|D={agents.0.params.dist_type}|A={agents.0.params.actor_hidden_layers}x{agents.0.params.actor_hidden_units}|C={agents.0.params.critic_hidden_layers}x{agents.0.params.critic_hidden_units}|Act={agents.0.params.actor_hidden_activation}>{agents.0.params.actor_final_activation}"
 ```
 
 2. Generate concrete configs:
@@ -202,8 +205,8 @@ Behavior & features:
 - The sweep runner is resumable and non-destructive. It only advances missing or empty run directories toward completion; completed directories are skipped.
 - If a per-config run directory is non-empty but has no `_RUN_COMPLETE.json`, the sweep fails during preflight before starting any runs. Inspect/delete/move that directory or choose a new `--output-dir`.
 - The sweep runner prints `START`, `DONE`, and periodic `STATUS` lines while runs are active. Use `--status-interval <seconds>` to change the heartbeat cadence, or `--status-interval 0` to disable it.
-- Generated config labels default to the base config's `label` plus the generated run index, or just `run_<index>` if the base config has no label. If you want labels to encode swept parameters, provide a `label_template` in the sweep spec.
-- `label_template` placeholders are resolved from full generated-config dotted paths. For multi-agent sweeps, reference the intended agent explicitly, such as `{agents.0.params.dist_type}` or `{agents.1.params.learning_rate}`.
+- Agent labels may be literal strings in the base config or templated strings in sweep `override` values such as `agents.0.label`.
+- Agent-label placeholders are resolved from full generated-config dotted paths after grid and override values are applied, such as `{agents.0.params.dist_type}` or `{agents.1.params.bid_per_item}`.
 - The sweep manifest is written to `run_summary.json` in the chosen output root. It records the per-run results plus the `configs_dir`, `experiment_module`, output root, wall-clock timing, and summary counts.
 - If every config is skipped because completion records already exist, `run_summary.json` is not written or modified because no output state changed.
 - Failed or errored runs also get a per-run `failure.json` in their run directory with the captured error details.
@@ -222,7 +225,9 @@ Migration note: existing workflows using `parallel_sweep.py` still work temporar
     - `parallel_sweep.py` — (deprecated) legacy single-step Cartesian sweeper
 - `utils/` — reusable helpers for analysis and plotting
     - `epoch_agg_loader.py` — list/load per-epoch Parquet files; basic policy summaries
-    - `plot_utils.py` — load/filter/extract_fields/plot helpers for notebooks
+    - `analysis.py` — load/filter/expand/inspect modern Parquet epoch aggregates
+    - `paper_plot.py` — focused paper-quality learning-curve plotting from epoch aggregates
+    - `plot_utils.py` — legacy notebook convenience helpers during the plotting migration
 - `legacy/` — original CSV-based helpers and plotting for older experiments
     - `plot_results.py`, `logs_to_csvs`, `csvs_to_plots`, `logs_to_plots`, `log_to_csv`
 - `configs/` — experiment/sweep YAML configuration (e.g., `base_sweep.yaml`, `grid_sweep_1.yaml`)

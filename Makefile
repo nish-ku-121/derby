@@ -13,8 +13,8 @@ JUPYTER_PORT ?= 8888
 #   make test TEST=derby/tests/test_utils.py::TestUtils::test_kth_largest_1
 TEST ?= derby/tests
 
-# Detect platform
-UNAME_S := $(shell uname -s)
+# Detect platform. On Windows PowerShell/CMD, `uname` usually does not exist.
+UNAME_S := $(shell uname -s 2>NUL || echo Windows_NT)
 
 # Set correct current directory path for Docker
 ifeq ($(OS),Windows_NT)
@@ -23,11 +23,11 @@ ifeq ($(OS),Windows_NT)
         PWD_PATH := $(shell pwd -W | sed 's#\\#/#g')
     else
         # CMD or PowerShell on Windows
-        PWD_PATH := $(PWD)
+        PWD_PATH := $(CURDIR)
     endif
 else
     # Linux/macOS
-    PWD_PATH := $(PWD)
+    PWD_PATH := $(CURDIR)
 endif
 
 # ----------------------------
@@ -60,13 +60,13 @@ shell: build
 run:
 	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run $(ARGS)"
 
-# Run pytest inside the Docker image (simple interface).
+# Run pytest inside the existing Docker image (simple interface).
 # Usage:
 #   make test                              # run entire suite (quiet)
 #   make test TEST=derby/tests/test_utils.py
 #   make test TEST=derby/tests/test_utils.py::TestClass::test_method
 # If you need custom flags occasionally: make run ARGS="pytest -vv -k pattern"
-test: build
+test:
 	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run pytest '$(TEST)' -q"
 
 # Run Jupyter Lab inside Docker with Poetry env (mounts repo and exposes port)

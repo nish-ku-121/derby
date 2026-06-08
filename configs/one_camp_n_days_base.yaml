@@ -8,12 +8,12 @@ num_trajs: 100         # trajectories per epoch
 num_epochs: 10         # training epochs
 setup: one_segment
 seed: 123              # optional; remove for stochastic run
-label: base_config     # optional, for easier filtering later
 agents:
   - name: learner
+    label: REINFORCE
     policy: REINFORCE
     params:
-      learning_rate: 1e-5
+      learning_rate: 1e-6
       dist_type: gaussian # lognormal # triangular
       use_baseline: false
       shape_reward: false
@@ -31,6 +31,7 @@ agents:
       # Omit to use the framework default.
       param_kernel_initializer: glorot_uniform # zeros
   - name: baseline
+    label: FixedBid|Bid={agents.1.params.bid_per_item}|Limit={agents.1.params.total_limit}
     policy: FixedBidPolicy
     params:
       bid_per_item: 5

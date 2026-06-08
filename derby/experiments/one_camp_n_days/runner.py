@@ -8,6 +8,7 @@ import uuid
 import time
 import math
 import random
+import string
 
 import numpy as np
 import pyarrow as pa
@@ -106,11 +107,21 @@ def _prepare_runtime_policy_params(filtered_params: Dict[str, Any], actions_scal
     return runtime_params
 
 
+def _strip_nonsemantic_config_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            k: _strip_nonsemantic_config_fields(v)
+            for k, v in value.items()
+            if k not in {"logging", "label"}
+        }
+    if isinstance(value, list):
+        return [_strip_nonsemantic_config_fields(v) for v in value]
+    return value
+
+
 def _compute_config_hash(config: Dict[str, Any]) -> str:
     """Compute a deterministic hash of the config, excluding non-semantic fields."""
-    # Exclude fields that shouldn't affect grouping/comparisons
-    excluded = {"logging", "label"}
-    cfg = {k: v for k, v in config.items() if k not in excluded}
+    cfg = _strip_nonsemantic_config_fields(config)
     # Stable string with sorted keys
     cfg_str = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(cfg_str.encode("utf-8")).hexdigest()
@@ -131,6 +142,50 @@ def _derive_policy_seed(global_seed: int, policy_class: str, agent_name: str) ->
     return int.from_bytes(h[:4], "big")
 
 
+def _get_by_dotted_key(cfg: Dict[str, Any], dotted_key: str) -> Any:
+    cur: Any = cfg
+    for part in dotted_key.split("."):
+        if part.isdigit():
+            if not isinstance(cur, list):
+                raise KeyError(dotted_key)
+            idx = int(part)
+            if idx >= len(cur):
+                raise KeyError(dotted_key)
+            cur = cur[idx]
+        else:
+            if not isinstance(cur, dict) or part not in cur:
+                raise KeyError(dotted_key)
+            cur = cur[part]
+    return cur
+
+
+def _render_agent_label(label: str, config: Dict[str, Any]) -> str:
+    formatter = string.Formatter()
+    parts: List[str] = []
+    for literal_text, field_name, format_spec, conversion in formatter.parse(label):
+        parts.append(literal_text)
+        if field_name is None:
+            continue
+        if not field_name:
+            raise ValueError("agent label templates do not support anonymous placeholders")
+        try:
+            value = _get_by_dotted_key(config, field_name)
+        except KeyError as e:
+            raise ValueError(
+                f"agent label template references missing config path '{field_name}'"
+            ) from e
+        if conversion == "r":
+            value = repr(value)
+        elif conversion == "s":
+            value = str(value)
+        elif conversion == "a":
+            value = ascii(value)
+        elif conversion is not None:
+            raise ValueError(f"Unsupported agent label template conversion '!{conversion}'")
+        parts.append(formatter.format_field(value, format_spec))
+    return "".join(parts)
+
+
 def run_experiment_from_config(
     config: Dict[str, Any],
     output_dir_override: str | None = None,
@@ -146,9 +201,9 @@ def run_experiment_from_config(
         setup: one_segment | two_segment
                                          # user-facing scenario name
         seed: int (optional)             # reproducibility seed (YAML ONLY; no CLI override)
-        label: str (optional)            # carried through to parquet output (excluded from hash)
         agents:                          # list in execution order
             - name: agent1                 # optional; auto-generated if omitted
+              label: REINFORCE             # optional; defaults to name
               policy: FullPolicyClassName  # MUST exactly match symbol in derby.core.policies
               params:                      # kwargs passed to the policy __init__ (filtered)
                   learning_rate: 5e-6
@@ -174,8 +229,8 @@ def run_experiment_from_config(
           policies (e.g., FixedBidPolicy) receive raw state/action data to maintain legacy semantics.
         - Per-epoch metrics: mean & std (population, ddof=0) of per-trajectory rewards for each agent.
         - Logging: If an output directory is provided (via CLI -o/--output-dir), a parquet file with
-          per-epoch rows is written containing config_hash, seed, label, and reward stats.
-        - config_hash: SHA256 over JSON dump of config minus excluded keys (label, logging) ensuring
+          per-epoch rows is written containing config_hash, global_seed, agent_label, and reward stats.
+        - config_hash: SHA256 over JSON dump of config minus non-semantic keys (label, logging) ensuring
           distinct seeds produce distinct hashes.
         - Returns: run_id (str) used in parquet filename.
         - Unsupported: legacy exp_* experiment mappings; this runner only supports the simplified schema.
@@ -191,8 +246,6 @@ def run_experiment_from_config(
     num_days = int(config['num_days'])
     num_trajs = int(config['num_trajs'])
     num_epochs = int(config['num_epochs'])
-    label = config.get('label')  # optional; default None if missing
-
     # Streaming flush interval (epochs) is CLI-controlled only (not from YAML).
     if flush_every < 1:
         flush_every = 1
@@ -230,6 +283,11 @@ def run_experiment_from_config(
     agent_meta: List[Dict[str, Any]] = []
     for idx, a in enumerate(agents_cfg, start=1):
         name = a.get('name', f'agent{idx}')
+        raw_agent_label = a.get('label', name)
+        if isinstance(raw_agent_label, str):
+            agent_label = _render_agent_label(raw_agent_label, config)
+        else:
+            agent_label = str(raw_agent_label)
         policy_name = a['policy']
         params: Dict[str, Any] = dict(a.get('params', {}))
 
@@ -275,6 +333,7 @@ def run_experiment_from_config(
         agents.append(agent)
         agent_meta.append({
             "agent_name": name,
+            "agent_label": agent_label,
             "policy_class": policy_name,
             "policy_params": filtered_params,
         })
@@ -303,7 +362,6 @@ def run_experiment_from_config(
     column_order = [
         "run_id",
         "config_hash",
-        "label",
         "setup",
         "global_seed",
         "num_days",
@@ -311,6 +369,7 @@ def run_experiment_from_config(
         "num_epochs",
         "epoch",
         "agent_name",
+        "agent_label",
         "policy_class",
         "policy_params_json",
         "mean_reward",
@@ -325,7 +384,6 @@ def run_experiment_from_config(
         arrow_schema = pa.schema([
             ("run_id", pa.string()),
             ("config_hash", pa.string()),
-            ("label", pa.string()),
             ("setup", pa.string()),
             ("global_seed", pa.int64()),
             ("num_days", pa.int32()),
@@ -333,6 +391,7 @@ def run_experiment_from_config(
             ("num_epochs", pa.int32()),
             ("epoch", pa.int32()),
             ("agent_name", pa.string()),
+            ("agent_label", pa.string()),
             ("policy_class", pa.string()),
             ("policy_params_json", pa.string()),
             ("mean_reward", pa.float32()),
@@ -402,7 +461,6 @@ def run_experiment_from_config(
                     batch_epoch_rows.append({
                         "run_id": run_id,
                         "config_hash": config_hash,
-                        "label": label,
                         "setup": setup_name,
                         "global_seed": global_seed,
                         "num_days": num_of_days,
@@ -410,6 +468,7 @@ def run_experiment_from_config(
                         "num_epochs": NUM_EPOCHS,
                         "epoch": i,
                         "agent_name": agent.name,
+                        "agent_label": ainfo["agent_label"],
                         "policy_class": ainfo["policy_class"],
                         "policy_params_json": json.dumps(ainfo["policy_params"], sort_keys=True),
                         "mean_reward": mean_r,

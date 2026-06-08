@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Generate concrete experiment configs from a sweep spec.
 
-Labels come from `label_template` when provided. Without a template, generated
-configs keep labels stable by using the base config's label plus the run index,
-or just the run index when the base config has no label.
-
 Minimal spec keys:
     sweep_name (str, required)
     base_config (path, required)
     override (mapping, optional) - dotted-key overrides
     grid (mapping, optional) - dotted-key -> list for cartesian product
     restrict.max_combinations (optional)
+
+Agent labels may be literal strings or templates using generated-config dotted
+paths, for example:
+    agents.0.label: "REINFORCE|LR={agents.0.params.learning_rate}"
 
 Example:
     sweep_name: demo
@@ -122,7 +122,7 @@ def _get_by_dotted_key(cfg: Dict[str, Any], dotted_key: str) -> Any:
     return cur
 
 
-def _render_label_template(template: str, cfg: Dict[str, Any]) -> str:
+def _render_agent_label_template(template: str, cfg: Dict[str, Any]) -> str:
     formatter = string.Formatter()
     parts: List[str] = []
     for literal_text, field_name, format_spec, conversion in formatter.parse(template):
@@ -130,12 +130,12 @@ def _render_label_template(template: str, cfg: Dict[str, Any]) -> str:
         if field_name is None:
             continue
         if not field_name:
-            raise ValueError("label_template does not support anonymous placeholders")
+            raise ValueError("agent label templates do not support anonymous placeholders")
         try:
             value = _get_by_dotted_key(cfg, field_name)
         except KeyError as e:
             raise ValueError(
-                f"label_template references missing config path '{field_name}'. "
+                f"agent label template references missing config path '{field_name}'. "
                 "Use full generated-config paths such as "
                 "{agents.0.params.dist_type} or add the value to the base config/grid."
             ) from e
@@ -146,30 +146,21 @@ def _render_label_template(template: str, cfg: Dict[str, Any]) -> str:
         elif conversion == 'a':
             value = ascii(value)
         elif conversion is not None:
-            raise ValueError(f"Unsupported label_template conversion '!{conversion}'")
+            raise ValueError(f"Unsupported agent label template conversion '!{conversion}'")
         parts.append(formatter.format_field(value, format_spec))
     return ''.join(parts)
 
 
-def build_label(
-    cfg: Dict[str, Any],
-    template: str | None,
-    base_label: str | None,
-    run_index: int,
-) -> str:
-    """Compose final label with strict template validation.
-
-    Rules:
-      - If no template: label is <base_label>|run=<index> when the base config has
-        a label, otherwise run_<index>.
-      - If template provided: placeholders are resolved from full generated-config
-        dotted paths, such as {agents.0.params.dist_type}.
-    """
-    if not template:
-        if base_label:
-            return f"{base_label}|run={run_index:04d}"
-        return f"run_{run_index:04d}"
-    return _render_label_template(template, cfg)
+def render_agent_labels(cfg: Dict[str, Any]) -> None:
+    agents = cfg.get("agents", [])
+    if not isinstance(agents, list):
+        return
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        label = agent.get("label")
+        if isinstance(label, str) and "{" in label and "}" in label:
+            agent["label"] = _render_agent_label_template(label, cfg)
 
 
 def generate_configs(spec_path: str, output_dir: str) -> None:
@@ -208,8 +199,6 @@ def generate_configs(spec_path: str, output_dir: str) -> None:
     overrides: Dict[str, Any] = spec.get('override', {}) or {}
     grid: Dict[str, List[Any]] = spec.get('grid', {}) or {}
     restrict: Dict[str, Any] = spec.get('restrict', {}) or {}
-    label_template: str | None = spec.get('label_template')
-
     combos = expand_grid(grid)
     combos = _restrict_combos(
         combos,
@@ -227,12 +216,7 @@ def generate_configs(spec_path: str, output_dir: str) -> None:
         apply_overrides(cfg, overrides)
         for k, v in combo.items():
             apply_overrides(cfg, {k: v})
-        cfg['label'] = build_label(
-            cfg,
-            label_template,
-            cfg.get('label'),
-            idx,
-        )
+        render_agent_labels(cfg)
         # Ensure each agent has consistent policy params section if present
         # (We don't mutate beyond provided dotted keys.)
         run_path = out_dir / f"run_{idx:04d}.yaml"

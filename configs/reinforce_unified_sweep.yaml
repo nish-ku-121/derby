@@ -7,11 +7,13 @@ base_config: configs/one_camp_n_days_base.yaml
 # Static overrides applied before each combo
 override:
   agents.0.policy: REINFORCE
-  num_trajs: 50
+  agents.0.label: "{agents.0.policy}|Baseline={agents.0.params.use_baseline}|D={agents.0.params.dist_type}|A={agents.0.params.actor_hidden_layers}x{agents.0.params.actor_hidden_units}|C={agents.0.params.critic_hidden_layers}x{agents.0.params.critic_hidden_units}|Act={agents.0.params.actor_hidden_activation}>{agents.0.params.actor_final_activation}|LR={agents.0.params.learning_rate}"
+  num_trajs: 100
   num_epochs: 100
   # Force learner seed (optional)
   # seed: 123
 grid:
+  agents.0.params.learning_rate: [1e-5, 1e-6]
   agents.0.params.dist_type: [gaussian] #, lognormal, triangular]
   # agents.0.params.actor_hidden_layers: [1, 4]
   # agents.0.params.actor_hidden_units: [1, 4]
@@ -21,6 +23,3 @@ grid:
 # Optional restrictions
 restrict:
   # max_combinations: 3     # cut off if grid grows big or set to 1 for smoke tests
-# Optional label template. Use full generated-config paths so multi-agent
-# sweeps can label any agent without hidden agent-0 assumptions.
-label_template: "{agents.0.policy}|Baseline={agents.0.params.use_baseline}|D={agents.0.params.dist_type}|A={agents.0.params.actor_hidden_layers}x{agents.0.params.actor_hidden_units}|C={agents.0.params.critic_hidden_layers}x{agents.0.params.critic_hidden_units}|Act={agents.0.params.actor_hidden_activation}>{agents.0.params.actor_final_activation}"
