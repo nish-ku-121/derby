@@ -89,7 +89,7 @@ NATURAL_ACTION_SPACE_PARAM_KEYS = frozenset({
 def _normalize_policy_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize user/config-level policy params without changing their semantics."""
     normalized = dict(params)
-    for key in ("learning_rate", *NATURAL_ACTION_SPACE_PARAM_KEYS):
+    for key in ("learning_rate", "adaptive_lr_epsilon", "adaptive_lr_eta", *NATURAL_ACTION_SPACE_PARAM_KEYS):
         if key in normalized and isinstance(normalized[key], str):
             try:
                 normalized[key] = float(normalized[key])

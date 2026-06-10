@@ -191,6 +191,99 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         loss = policy.policy_loss(self.states_for_loss, actions, rewards)
         self.assertTrue(tf.math.is_finite(loss).numpy())
 
+    def _build_update_test_policy(self, **kwargs):
+        policy = REINFORCE(
+            auction_item_spec_ids=self.auction_item_spec_ids,
+            num_dist_per_spec=self.num_dist,
+            dist_type='gaussian',
+            actor_hidden_layers=0,
+            use_baseline=False,
+            **kwargs,
+        )
+        policy(self.states)
+        return policy
+
+    @staticmethod
+    def _variable_delta_norm(before, variables):
+        sq_sum = 0.0
+        for old, new in zip(before, variables):
+            diff = new.numpy() - old
+            sq_sum += float(np.sum(np.square(diff)))
+        return float(np.sqrt(sq_sum))
+
+    def test_fixed_learning_rate_update_remains_default(self):
+        learning_rate = 0.1
+        policy = self._build_update_test_policy(learning_rate=learning_rate)
+        before = [v.numpy().copy() for v in policy.trainable_variables]
+        with tf.GradientTape() as tape:
+            loss = tf.add_n([tf.reduce_sum(v) for v in policy.trainable_variables])
+
+        policy.update(None, None, None, loss, tf_grad_tape=tape)
+
+        grad_norm = np.sqrt(sum(v.size for v in before))
+        self.assertAlmostEqual(policy.last_grad_norm, grad_norm, places=5)
+        self.assertAlmostEqual(policy.last_effective_learning_rate, learning_rate, places=7)
+        self.assertAlmostEqual(
+            self._variable_delta_norm(before, policy.trainable_variables),
+            learning_rate * grad_norm,
+            places=5,
+        )
+
+    def test_adaptive_learning_rate_matches_sqrt_epsilon_update_norm(self):
+        epsilon = 0.04
+        eta = 1e-12
+        policy = self._build_update_test_policy(
+            learning_rate=0.1,
+            adaptive_learning_rate=True,
+            adaptive_lr_epsilon=epsilon,
+            adaptive_lr_eta=eta,
+        )
+        before = [v.numpy().copy() for v in policy.trainable_variables]
+        with tf.GradientTape() as tape:
+            loss = tf.add_n([tf.reduce_sum(v) for v in policy.trainable_variables])
+
+        policy.update(None, None, None, loss, tf_grad_tape=tape)
+
+        grad_norm = np.sqrt(sum(v.size for v in before))
+        expected_lr = np.sqrt(epsilon / (grad_norm ** 2 + eta))
+        self.assertAlmostEqual(policy.last_grad_norm, grad_norm, places=5)
+        self.assertAlmostEqual(policy.last_effective_learning_rate, expected_lr, places=7)
+        self.assertAlmostEqual(
+            self._variable_delta_norm(before, policy.trainable_variables),
+            np.sqrt(epsilon),
+            places=5,
+        )
+
+    def test_adaptive_learning_rate_tiny_gradient_is_finite(self):
+        policy = self._build_update_test_policy(
+            adaptive_learning_rate=True,
+            adaptive_lr_epsilon=0.04,
+            adaptive_lr_eta=1e-8,
+        )
+        before = [v.numpy().copy() for v in policy.trainable_variables]
+        with tf.GradientTape() as tape:
+            loss = tf.add_n([tf.reduce_sum(v * 0.0) for v in policy.trainable_variables])
+
+        policy.update(None, None, None, loss, tf_grad_tape=tape)
+
+        self.assertEqual(policy.last_grad_norm, 0.0)
+        self.assertTrue(np.isfinite(policy.last_effective_learning_rate))
+        self.assertAlmostEqual(
+            self._variable_delta_norm(before, policy.trainable_variables),
+            0.0,
+            places=7,
+        )
+
+    def test_adaptive_learning_rate_requires_positive_epsilon(self):
+        with self.assertRaisesRegex(ValueError, "adaptive_lr_epsilon"):
+            self._build_update_test_policy(adaptive_learning_rate=True)
+        with self.assertRaisesRegex(ValueError, "adaptive_lr_epsilon"):
+            self._build_update_test_policy(adaptive_learning_rate=True, adaptive_lr_epsilon=0.0)
+
+    def test_adaptive_learning_rate_requires_positive_eta(self):
+        with self.assertRaisesRegex(ValueError, "adaptive_lr_eta"):
+            self._build_update_test_policy(adaptive_lr_eta=0.0)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

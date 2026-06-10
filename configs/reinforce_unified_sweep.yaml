@@ -14,6 +14,9 @@ override:
   # seed: 123
 grid:
   agents.0.params.learning_rate: [1e-5, 1e-6]
+  # agents.0.params.adaptive_learning_rate: [true]
+  # agents.0.params.adaptive_lr_epsilon: [1e-8]
+  # agents.0.params.adaptive_lr_eta: [1e-12]
   agents.0.params.dist_type: [gaussian] #, lognormal, triangular]
   # agents.0.params.actor_hidden_layers: [1, 4]
   # agents.0.params.actor_hidden_units: [1, 4]
