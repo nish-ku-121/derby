@@ -1,4 +1,1 @@
-"""Utility helpers for analysis and plotting.
-
-This package consolidates reusable notebook utilities.
-"""
+"""Utility helpers for Parquet analysis and paper plotting."""

@@ -301,6 +301,9 @@ def plot_epoch_rewards(
     legend_group_regex: Optional[str] = None,
     # if True and legend_group_regex is set, arrange groups side-by-side as columns with headers.
     legend_group_side_by_side: bool = False,
+    # alternate column for legend labels (display only). If provided and present in df,
+    # values from this column supersede policy_class for legend text & grouping regex.
+    legend_label_col: Optional[str] = None,
     # minimal metadata caption
     show_metadata: bool = False,
     metadata_keys: Sequence[str] = ("learning_rate", "setup"),
@@ -494,19 +497,31 @@ def plot_epoch_rewards(
     label_for_line: Dict[Any, str] = {}
     group_for_line: Dict[Any, Optional[str]] = {}
 
-    def _legend_group_for_policy(policy: str) -> Optional[str]:
+    def _legend_group_for_policy(policy_like: str) -> Optional[str]:
         if not legend_group_regex:
             return None
         pat = legend_group_regex
         try:
-            m = re.search(pat, policy)
+            m = re.search(pat, policy_like)
         except re.error:
             m = None
         if m:
             return m.group(1)
         return 'Other'
     for (policy, run), grp in df2.sort_values(['policy_class', 'run_id', 'epoch']).groupby(['policy_class', 'run_id']):
+        # Decide base label source: override via legend_label_col if provided
+        base_label_source = policy
+        if legend_label_col and legend_label_col in grp.columns:
+            try:
+                v = grp[legend_label_col].iloc[0]
+                if pd.notna(v):
+                    base_label_source = str(v)
+            except Exception:
+                pass
         base_label = _clean_policy_name(policy)
+        if legend_label_col and legend_label_col in grp.columns:
+            # Recompute base_label using override (cleaning optional)
+            base_label = _clean_policy_name(base_label_source) if clean_policy_names else base_label_source
         if show_run_id_when_needed and runs_per_policy.get(policy, 1) > 1:
             label = f"{base_label} — {run[:8]}"
         else:
@@ -563,7 +578,7 @@ def plot_epoch_rewards(
         )
         line_for_group[(policy, run)] = line
         label_for_line[line] = label
-        group_for_line[line] = _legend_group_for_policy(policy)
+        group_for_line[line] = _legend_group_for_policy(base_label_source if legend_label_col else policy)
 
         # Add halo/outline under highlighted lines to improve separation
         if is_best and top_k_outline:

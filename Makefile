@@ -8,8 +8,13 @@ PYTHON_IMAGE ?= python:3.10-slim
 # Host port to expose Jupyter on (container still listens on 8888)
 JUPYTER_PORT ?= 8888
 
-# Detect platform
-UNAME_S := $(shell uname -s)
+# Default pytest target. Can be overridden with:
+#   make test TEST=derby/tests/test_utils.py
+#   make test TEST=derby/tests/test_utils.py::TestUtils::test_kth_largest_1
+TEST ?= derby/tests
+
+# Detect platform. On Windows PowerShell/CMD, `uname` usually does not exist.
+UNAME_S := $(shell uname -s 2>NUL || echo Windows_NT)
 
 # Set correct current directory path for Docker
 ifeq ($(OS),Windows_NT)
@@ -18,41 +23,54 @@ ifeq ($(OS),Windows_NT)
         PWD_PATH := $(shell pwd -W | sed 's#\\#/#g')
     else
         # CMD or PowerShell on Windows
-        PWD_PATH := $(PWD)
+        PWD_PATH := $(CURDIR)
     endif
 else
     # Linux/macOS
-    PWD_PATH := $(PWD)
+    PWD_PATH := $(CURDIR)
 endif
 
 # ----------------------------
 # Targets
 # ----------------------------
 
-.PHONY: docker-lockfile docker-build docker-shell docker-run docker-jupyter
+.PHONY: lockfile build shell run jupyter
+.PHONY: test
 
-# Generate poetry.lock inside Docker only when pyproject.toml changes
+# Generate poetry.lock inside Docker only when pyproject.toml changes.
+# Run poetry lock inside a throwaway container; always 'touch' the lockfile so
+# its timestamp is newer than pyproject.toml even if no changes were needed.
+# This prevents make from rerunning this step on every invocation.
 poetry.lock: pyproject.toml
-	docker run --rm -v "$(PWD_PATH):/app" $(PYTHON_IMAGE) bash -c "cd /app && pip install poetry==2.1.4 && poetry lock"
+	docker run --rm -v "$(PWD_PATH):/app" $(PYTHON_IMAGE) bash -c "cd /app && pip install poetry==2.1.4 && poetry lock && touch poetry.lock"
 
 # Convenience target to force (re)locking regardless of timestamps
-docker-lockfile:
+lockfile:
 	$(MAKE) -B poetry.lock
 
 # Build Docker image (ensure lockfile is up to date first)
-docker-build: poetry.lock
+build: poetry.lock
 	docker build -t derby-app .
 
 # Run container with live code mounting
-docker-shell: docker-build
+shell: build
 	docker run -it --rm -v "$(PWD_PATH):/app" derby-app bash
 
 # Generalized Docker run target
-docker-run:
+run:
 	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run $(ARGS)"
 
+# Run pytest inside the existing Docker image (simple interface).
+# Usage:
+#   make test                              # run entire suite (quiet)
+#   make test TEST=derby/tests/test_utils.py
+#   make test TEST=derby/tests/test_utils.py::TestClass::test_method
+# If you need custom flags occasionally: make run ARGS="pytest -vv -k pattern"
+test:
+	docker run --rm -v "$(PWD_PATH):/app" derby-app bash -lc "cd /app && poetry run pytest '$(TEST)' -q"
+
 # Run Jupyter Lab inside Docker with Poetry env (mounts repo and exposes port)
-docker-jupyter: docker-build
+jupyter: build
 	docker run --rm -it \
 		-p $(JUPYTER_PORT):8888 \
 		-v "$(PWD_PATH):/app" \

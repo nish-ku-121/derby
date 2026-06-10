@@ -1,4 +1,4 @@
-from typing import Set, List, Dict, Iterable, Callable
+from typing import Set, List, Dict, Iterable, Callable, Optional
 import itertools
 import numpy as np
 import os
@@ -80,6 +80,8 @@ class Agent:
         :return: the action to take.
         '''
         action = None
+    # Upstream (trajectory generation) already slices to the latest timestep; this method
+    # therefore receives a single-step folded state (time dim length 1) for non-recurrent policies.
         states = self.convert_to_tf_tensor_if_needed(self.states_scaler(states))
         scaled_actions = self.policy.choose_actions(self.policy.call(states))
         if tf.is_tensor(scaled_actions):
@@ -117,7 +119,6 @@ class Agent:
         states = self.convert_to_tf_tensor_if_needed(self.states_scaler(states))
         actions = self.convert_to_tf_tensor_if_needed(self.actions_scaler(actions))
         rewards = self.convert_to_tf_tensor_if_needed(rewards)
-
         self.policy.update(states, actions, rewards, policy_loss, tf_grad_tape=tf_grad_tape)
 
     def update_stats(self, states, actions, rewards):
@@ -143,7 +144,6 @@ class Agent:
         self.cumulative_rewards[-1000:]
 
     def convert_to_tf_tensor_if_needed(self, arr):
-        if self.policy.is_tensorflow:
-            return tf.convert_to_tensor(arr)
-        else:
+        if not self.policy.is_tensorflow:
             return arr
+        return tf.convert_to_tensor(arr)

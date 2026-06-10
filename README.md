@@ -50,88 +50,76 @@ This project is designed to run using Docker. You only need Docker installed—n
 2. **Build the Docker image**  
     In the project root directory, run:
     ```bash
-    make docker-build
+    make build
     ```
+    Re-run `make build` after changing `Dockerfile`, `pyproject.toml`, or `poetry.lock`.
+    Normal source edits are mounted into the container, so `make run` and `make test` use the existing image.
 
 ## Running Experiments
 
-The Makefile's `docker-run` target automatically executes commands via Poetry inside the container, so you can pass plain `python` commands in `ARGS`.
-
-You can invoke an experiment script in several equivalent ways (pick whichever you find clearest):
-
-1. Module form (preferred; resolves relative imports robustly)
-    ```bash
-    make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days <experiment_name> <num_days> <num_trajs> <num_epochs> <learning_rate>"
-    ```
-2. File path form
-    ```bash
-    make docker-run ARGS="python -u derby/experiments/one_camp_n_days.py <experiment_name> <num_days> <num_trajs> <num_epochs> <learning_rate>"
-    ```
-3. Open an interactive shell then run repeatedly (good for quick loops)
-    ```bash
-    make docker-shell
-    # Now inside container
-    poetry run python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7
-    ```
-4. With explicit environment variables (example: restrict TensorFlow threading)
-    ```bash
-    make docker-run ARGS="TF_NUM_INTEROP_THREADS=1 TF_NUM_INTRAOP_THREADS=1 python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
-    ```
-5. Using a short alias variable for readability (shell feature)
-    ```bash
-    EXP_ARGS="exp_1000 1 200 100 5e-7" ; make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days $EXP_ARGS"
-    ```
-
-Example (module form):
-```bash
-make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days exp_1000 1 200 100 5e-7"
-```
+The Makefile's `run` target automatically executes commands via Poetry inside the container, so you can pass plain `python` commands in `ARGS`.
 
 ### Modern YAML-driven runner (v2)
 
-For new work, prefer the YAML-based runner `derby.experiments.one_camp_n_days_v2`. It consumes a single config dict from a YAML file and logs per-epoch metrics to Parquet.
+For new work, prefer the YAML-based `derby.experiments.one_camp_n_days` package entrypoint. It consumes a single config dict from a YAML file and logs per-epoch metrics to Parquet.
 
 CLI usage:
 ```bash
-make docker-run ARGS="python -u -m derby.experiments.one_camp_n_days_v2 \
-    --config configs/one_camp_n_days_v2_config.yaml \
-    -o results/test_run \
+make run ARGS="python -u -m derby.experiments.one_camp_n_days \
+    --config configs/one_camp_n_days_base.yaml \
+    --output-dir results/test_run \
     --log-level INFO"
 ```
 
 Key points:
 - Seed (if you want reproducibility) must be specified ONLY inside the YAML as `seed:`. There is no CLI override.
 - Output directory (`-o/--output-dir`) is optional; if provided, a Parquet file `epoch_agg__<run_id>.parquet` is written there containing one row per (epoch, agent).
-- Each row includes: `run_id`, `config_hash`, `seed`, `label` (if provided), per-agent mean/std reward, and core config fields.
-- `config_hash` is a SHA256 of the config with non-semantic keys (`label`, `logging`) removed; changing the seed changes the hash.
+- Each row includes: `run_id`, `config_hash`, `global_seed`, `agent_label`, per-agent mean/std reward, and core config fields.
+- `config_hash` is a SHA256 of the config with non-semantic keys (`label`, `logging`) removed recursively; changing the seed changes the hash.
 - Baseline (non-TensorFlow) policies receive raw states/actions; only TensorFlow policies are scaled/normalized.
 
-Minimal YAML example (`configs/one_camp_n_days_v2_config.yaml`):
+Minimal base config example (`configs/one_camp_n_days_base.yaml`) using the unified `REINFORCE` policy (old preset names removed):
 ```yaml
 num_days: 1            # days per trajectory
 num_trajs: 200         # trajectories per epoch
 num_epochs: 100        # training epochs
-setup: setup_1         # maps to Experiment.setup_1()
+setup: one_segment
 seed: 123              # optional; remove for stochastic run
-label: tiny-demo       # optional, for easier filtering later
 agents:
-    - name: learner
-        policy: REINFORCE_Baseline_Gaussian_v3_1_MarketEnv_Continuous
-        params:
-            learning_rate: 5e-7
-    - name: baseline
-        policy: FixedBidPolicy
-        params:
-            bid_per_item: 5
-            total_limit: 5
+  - name: learner
+    label: REINFORCE
+    policy: REINFORCE            # unified class (no more REINFORCE_PRESET_v*)
+    params:
+      learning_rate: 5e-7
+      # Common knobs (override as needed) ----------------------------------
+      actor_hidden_layers: 1     # 0 => no hidden layers before param head
+      actor_hidden_units: 8
+      critic_hidden_layers: 1
+      critic_hidden_units: 8
+      actor_final_activation: softplus   # softplus | relu | other TF activations
+      # Optional explicit action-space initialization targets in natural units
+      # init_action_center: 5.0
+      # init_action_stddev: 0.5
+      min_action_stddev: 1e-5           # minimum stddev in natural action units
+      # Optional advanced knob for the parameter-head kernel initializer
+      # Omit to use the framework default.
+      # param_kernel_initializer: glorot_uniform
+      dist_type: gaussian                # gaussian | lognormal | triangular (stub)
+      shape_reward: false                # if true: advantage shaping via log(1+r)
+  - name: baseline
+    label: FixedBid|Bid={agents.1.params.bid_per_item}|Limit={agents.1.params.total_limit}
+    policy: FixedBidPolicy
+    params:
+      bid_per_item: 5
+      total_limit: 5
 ```
 
 Python / notebook usage (public API):
 ```python
 import yaml
-from derby.experiments.one_camp_n_days_v2 import run_experiment_from_config
+from derby.experiments.one_camp_n_days.runner import run_experiment_from_config
 
-with open("configs/one_camp_n_days_v2_config.yaml", "r", encoding="utf-8") as f:
+with open("configs/one_camp_n_days_base.yaml", "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
 run_id = run_experiment_from_config(
@@ -145,49 +133,86 @@ print("Run ID:", run_id)
 
 Tip: If you want many variants, use the parallel sweeper below instead of hand-editing multiple YAMLs.
 
+Transition note: legacy experiment scripts and CSV-era utilities still live under `legacy/` during the migration to the new pathway. They are not part of the supported modern workflow and should only be consulted if something critical needs to be recovered while refactoring.
+
 ---
 
-## Parallel sweeps (recommended)
+## Unified REINFORCE Policy
 
-Use the process-based sweeper to run many configurations in parallel and collect results:
+The legacy preset classes (`REINFORCE_PRESET_v1` .. `v4`) have been removed. All variants are now expressed by explicitly setting constructor parameters (or YAML `params`). Key knobs:
 
-```bash
-make docker-run ARGS='python -u -m pipeline.parallel_sweep \
-    --base-yaml configs/base_sweep.yaml \
-    --grid-yaml configs/grid_sweep_1.yaml \
-    --output-dir results/sweep \
-    --log-level INFO \
-    --tf-intra 1 --tf-inter 1'
+| Parameter | Purpose |
+|-----------|---------|
+| `learning_rate` | SGD learning rate |
+| `dist_type` | `gaussian` (default) or `lognormal` (triangular stub) |
+| `actor_hidden_layers` / `actor_hidden_units` | Depth/width of actor MLP before param head |
+| `critic_hidden_layers` / `critic_hidden_units` | Depth/width of value network |
+| `actor_final_activation` | Activation applied to raw mean/sigma streams (`softplus`, `relu`, etc.) |
+| `init_action_center` | Optional explicit initialization target for the primary action dimension, in natural action units |
+| `init_action_stddev` | Optional explicit initial spread target for the primary action dimension, in natural action units |
+| `min_action_stddev` | Minimum standard deviation in natural action units; the runner scales it before policy construction |
+| `param_kernel_initializer` | Optional Keras initializer spec for the parameter-head kernel; omit for framework default |
+| `shape_reward` | If true, applies `log(1+r)` shaping to positive rewards for variance reduction |
+| `seed` | Optional deterministic seed (Python, NumPy, TF generator) |
+
+Triangular distribution is a placeholder and raises `NotImplementedError` when sampled/log-prob requested.
+
+To replicate an old preset, identify its architecture (depth/width), activation, and sigma parameters and specify them directly.
+
+---
+
+## Parameter Sweeps (modern two-step workflow)
+
+The old `pipeline.parallel_sweep` script is deprecated. Use the new config-grid + sweep-runner pipeline:
+
+1. Author two YAML files:
+     - A base experiment config: one valid experiment run config.
+     - A sweep spec: a higher-level recipe that points to a `base_config` and defines `grid`, `override`, and optional `restrict` fields.
+
+Example sweep spec (`configs/reinforce_unified_sweep.yaml`):
+```yaml
+sweep_name: reinforce_unified_demo
+base_config: configs/one_camp_n_days_base.yaml
+override:
+    num_trajs: 50
+    num_epochs: 100
+    agents.0.label: "REINFORCE|Baseline={agents.0.params.use_baseline}|D={agents.0.params.dist_type}|A={agents.0.params.actor_hidden_layers}x{agents.0.params.actor_hidden_units}|C={agents.0.params.critic_hidden_layers}x{agents.0.params.critic_hidden_units}|Act={agents.0.params.actor_hidden_activation}>{agents.0.params.actor_final_activation}"
+grid:
+    agents.0.params.learning_rate: [5e-7, 1e-6]
+    agents.0.params.dist_type: [gaussian, lognormal]
+    agents.0.params.actor_hidden_units: [8, 16]
+restrict:
+    # max_combinations: 32
 ```
 
-Key ideas:
-- Base config (`configs/base_sweep.yaml`): a single config dict accepted by the simplified runner.
-- Grid config (`configs/grid_sweep.yaml`): a mapping of dotted-keys to lists, expanded into the Cartesian product. Example keys: `num_epochs`, `agents.0.params.learning_rate`.
-- One process per config variant (default workers = all CPU cores). TensorFlow and BLAS threads per process can be controlled with `--tf-intra` and `--tf-inter`.
+2. Generate concrete configs:
+```bash
+make run ARGS="python -u -m pipeline.make_config_grid --spec configs/reinforce_unified_sweep.yaml --output-dir sweeps/reinforce_unified_demo/configs"
+```
+This produces `sweeps/reinforce_unified_demo/configs/*.yaml` (one per combination).
 
-Useful flags:
-- `--base-yaml`, `--grid-yaml`: YAML files for the base config and parameter grid.
-- `--output-dir`: base directory for outputs. A timestamped directory `sweep_<UTC_TIMESTAMP>` is created per run. Parquet files are written under `parquet/`. A stable `parallel_results.jsonl` and a timestamped copy are both produced.
-- `--max-workers`: cap number of worker processes (default = all CPUs).
-- `--tf-intra`, `--tf-inter`: TensorFlow intra/inter-op thread counts per process (defaults 1/1 to avoid oversubscription).
-- `--start-method`: multiprocessing start method (default `spawn`, safest for TensorFlow).
-- `--log-level`: controls ONLY the sweep/orchestrator logs (DEBUG/INFO/WARNING/ERROR or suppression aliases like NONE/OFF/QUIET). Inner experiments use their own defaults.
+3. Execute configs sequentially or in parallel:
+```bash
+# Parallel (4 workers)
+make run ARGS="python -u -m pipeline.run_experiment_sweep --configs-dir sweeps/reinforce_unified_demo/configs --experiment-module derby.experiments.one_camp_n_days --output-dir results/reinforce_unified_demo --parallel 4"
 
-Memory advisory: After each sweep a `memory_advisory.txt` is written showing observed mean/median/p95/max end RSS and peak RSS plus recommended aggressive & conservative worker counts. Tuning constants:
-- `DEFAULT_MEMORY_SAFETY_FACTOR = 0.85`
-- `DEFAULT_MEMORY_RESERVE_MB = 1024`
+# Dry-run (print commands only)
+make run ARGS="python -u -m pipeline.run_experiment_sweep --configs-dir sweeps/reinforce_unified_demo/configs --experiment-module derby.experiments.one_camp_n_days --output-dir results/reinforce_unified_demo --dry-run"
+```
 
-See `docs/MemoryAdvisory.md` for full explanation of these fields and how to use them when scaling concurrency.
+Behavior & features:
+- Each generated config gets its own subdirectory under the chosen `--output-dir` path; a completion record `_RUN_COMPLETE.json` marks a successfully completed run and causes later invocations to skip that config.
+- The sweep runner is resumable and non-destructive. It only advances missing or empty run directories toward completion; completed directories are skipped.
+- If a per-config run directory is non-empty but has no `_RUN_COMPLETE.json`, the sweep fails during preflight before starting any runs. Inspect/delete/move that directory or choose a new `--output-dir`.
+- The sweep runner prints `START`, `DONE`, and periodic `STATUS` lines while runs are active. Use `--status-interval <seconds>` to change the heartbeat cadence, or `--status-interval 0` to disable it.
+- Agent labels may be literal strings in the base config or templated strings in sweep `override` values such as `agents.0.label`.
+- Agent-label placeholders are resolved from full generated-config dotted paths after grid and override values are applied, such as `{agents.0.params.dist_type}` or `{agents.1.params.bid_per_item}`.
+- The sweep manifest is written to `run_summary.json` in the chosen output root. It records the per-run results plus the `configs_dir`, `experiment_module`, output root, wall-clock timing, and summary counts.
+- If every config is skipped because completion records already exist, `run_summary.json` is not written or modified because no output state changed.
+- Failed or errored runs also get a per-run `failure.json` in their run directory with the captured error details.
+- Failures return a JSON summary (use `--json` for machine-readable output).
 
-Behavior and logs:
-- Per-run labels are formed automatically as `<base>-i<index>` where `<base>` is the first non-empty of: (variant `label` after overrides) → (base YAML `label`) → (grid filename stem). This preserves user intent while ensuring uniqueness per variant.
-- The sweeper prints a concise line when each run starts, including label, policy, learning rate, epochs, and trajs.
-- Inner experiments are run with their own default logging (no per-run override flag). To reduce inner noise, configure logging within the experiment config itself (or post-filter logs). The sweep `--log-level` only affects the orchestration layer.
-- At the end, the sweeper reports wall time, aggregate CPU time, speedup, and parallel efficiency.
-
-Outputs:
-- Parquet files per run: `<output-dir>/parquet/epoch_agg__<uuid>.parquet` (ignored by git).
-- JSONL summary: `<output-dir>/parallel_results.jsonl` plus a timestamped copy `parallel_results_YYYYMMDD-HHMMSS.jsonl`.
+Migration note: existing workflows using `parallel_sweep.py` still work temporarily but will be removed; switch to the above pattern.
 
 ---
 
@@ -195,10 +220,14 @@ Outputs:
 
 - `derby/` — core library (environments, agents, auctions, markets, policies, utils)
 - `pipeline/` — modern, process-based runners and tools
-    - `parallel_sweep.py` — main entrypoint for running config sweeps in parallel (writes Parquet + JSONL outputs under a single output directory)
+    - `make_config_grid.py` — expand a sweep spec YAML into concrete experiment config files
+    - `run_experiment_sweep.py` — run a directory of generated configs against an experiment module
+    - `parallel_sweep.py` — (deprecated) legacy single-step Cartesian sweeper
 - `utils/` — reusable helpers for analysis and plotting
     - `epoch_agg_loader.py` — list/load per-epoch Parquet files; basic policy summaries
-    - `plot_utils.py` — load/filter/extract_fields/plot helpers for notebooks
+    - `analysis.py` — load/filter/expand/inspect modern Parquet epoch aggregates
+    - `paper_plot.py` — focused paper-quality learning-curve plotting from epoch aggregates
+    - `plot_utils.py` — legacy notebook convenience helpers during the plotting migration
 - `legacy/` — original CSV-based helpers and plotting for older experiments
     - `plot_results.py`, `logs_to_csvs`, `csvs_to_plots`, `logs_to_plots`, `log_to_csv`
 - `configs/` — experiment/sweep YAML configuration (e.g., `base_sweep.yaml`, `grid_sweep_1.yaml`)
@@ -214,7 +243,7 @@ Notes:
 
 If you change dependencies in `pyproject.toml`, you may want to regenerate the `poetry.lock` file. Use the following make command:
 ```bash
-make docker-lockfile
+make lockfile
 ```
 This will update `poetry.lock` to match the dependencies in `pyproject.toml` using Docker for a fully reproducible environment.
 

@@ -1,0 +1,42 @@
+# Ignore VCS and editor files
+.git
+.gitignore
+.vscode
+.idea
+
+# Python caches and build artifacts
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.dist-info/
+dist/
+build/
+
+# Local envs and secrets
+.venv/
+.env
+.env.*
+
+# Large/unnecessary directories for the image
+results/
+sweeps/
+.logs/
+logs/
+legacy/logs*/
+
+# Notebooks and checkpoints
+notebooks/
+**/.ipynb_checkpoints/
+*.ipynb
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Misc
+*.sqlite
+*.db
