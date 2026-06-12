@@ -374,6 +374,8 @@ def run_experiment_from_config(
         "policy_params_json",
         "mean_reward",
         "std_reward",
+        "effective_learning_rate",
+        "grad_norm",
         "n_trajs",
     ]
     batch_epoch_rows: List[Dict[str, Any]] = []  # buffered rows until flush
@@ -396,6 +398,8 @@ def run_experiment_from_config(
             ("policy_params_json", pa.string()),
             ("mean_reward", pa.float32()),
             ("std_reward", pa.float32()),
+            ("effective_learning_rate", pa.float32()),
+            ("grad_norm", pa.float32()),
             ("n_trajs", pa.int32()),
         ])
     except Exception:  # pragma: no cover
@@ -422,6 +426,8 @@ def run_experiment_from_config(
         try:
             columns_data["mean_reward"] = [None if v is None or (isinstance(v, float) and math.isnan(v)) else float(np.float32(v)) for v in columns_data["mean_reward"]]
             columns_data["std_reward"] = [None if v is None or (isinstance(v, float) and math.isnan(v)) else float(np.float32(v)) for v in columns_data["std_reward"]]
+            columns_data["effective_learning_rate"] = [None if v is None or (isinstance(v, float) and math.isnan(v)) else float(np.float32(v)) for v in columns_data["effective_learning_rate"]]
+            columns_data["grad_norm"] = [None if v is None or (isinstance(v, float) and math.isnan(v)) else float(np.float32(v)) for v in columns_data["grad_norm"]]
         except Exception:  # pragma: no cover
             pass
         if arrow_schema is not None:
@@ -458,6 +464,7 @@ def run_experiment_from_config(
 
                 # Append to batch rows for parquet.
                 if output_dir:
+                    policy = agent.policy
                     batch_epoch_rows.append({
                         "run_id": run_id,
                         "config_hash": config_hash,
@@ -473,6 +480,8 @@ def run_experiment_from_config(
                         "policy_params_json": json.dumps(ainfo["policy_params"], sort_keys=True),
                         "mean_reward": mean_r,
                         "std_reward": std_r,
+                        "effective_learning_rate": getattr(policy, "last_effective_learning_rate", None),
+                        "grad_norm": getattr(policy, "last_grad_norm", None),
                         "n_trajs": num_of_trajs,
                     })
 
