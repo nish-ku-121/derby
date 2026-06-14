@@ -17,6 +17,7 @@ import tensorflow as tf
 
 from derby.core.policies import AbstractPolicy  # reuse base class
 from derby.core.environments import AbstractEnvironment
+from derby.policies.update_rules import GradientNormAdaptiveLearningRate
 
 
 class REINFORCE(AbstractPolicy, tf.keras.Model):
@@ -49,7 +50,10 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
                  actor_hidden_activation='leaky_relu',
                  critic_hidden_layers: int = 1, critic_hidden_units: int = 6,
                  critic_hidden_activation='relu',
-                 use_baseline: bool = True):
+                 use_baseline: bool = True,
+                 adaptive_learning_rate: bool = False,
+                 adaptive_lr_epsilon: float | None = None,
+                 adaptive_lr_eta: float = 1e-8):
         super().__init__()
         self.is_partial = is_partial
         self.discount_factor = discount_factor
@@ -76,6 +80,12 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
         self._actor_hidden_activation_fn, self._actor_hidden_activation_name = self._resolve_activation(actor_hidden_activation)
         self._critic_hidden_activation_fn, self._critic_hidden_activation_name = self._resolve_activation(critic_hidden_activation)
         self.use_baseline = bool(use_baseline)
+        self.adaptive_learning_rate = bool(adaptive_learning_rate)
+        self.adaptive_lr_epsilon = None if adaptive_lr_epsilon is None else float(adaptive_lr_epsilon)
+        self.adaptive_lr_eta = float(adaptive_lr_eta)
+        self.adaptive_lr_rule = None
+        self.last_grad_norm = None
+        self.last_effective_learning_rate = None
 
 
         # Subaction metadata must exist before validation that references num_dist_per_subaction
@@ -86,6 +96,11 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
         self.num_dist_per_subaction = num_dist_per_spec
 
         self._validate_config()
+        if self.adaptive_learning_rate:
+            self.adaptive_lr_rule = GradientNormAdaptiveLearningRate(
+                epsilon=self.adaptive_lr_epsilon,
+                eta=self.adaptive_lr_eta,
+            )
         if seed is not None:
             try:
                 random.seed(seed)
@@ -273,7 +288,9 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
             f"init_action_center={self.init_action_center}, init_action_stddev={self.init_action_stddev}, "
             f"min_action_stddev={self.min_action_stddev}, "
             f"actor_depth={self.actor_hidden_layers}, actor_width={self.actor_hidden_units}, actor_act={self._actor_hidden_activation_name}, "
-            f"use_baseline={self.use_baseline}, critic_depth={self.critic_hidden_layers}, critic_width={self.critic_hidden_units}, critic_act={self._critic_hidden_activation_name})"
+            f"use_baseline={self.use_baseline}, critic_depth={self.critic_hidden_layers}, critic_width={self.critic_hidden_units}, "
+            f"critic_act={self._critic_hidden_activation_name}, adaptive_learning_rate={self.adaptive_learning_rate}, "
+            f"adaptive_lr_epsilon={self.adaptive_lr_epsilon}, adaptive_lr_eta={self.adaptive_lr_eta})"
         )
 
     # Provide a human-readable string; identical to __repr__ for now.
@@ -328,6 +345,12 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
                 "triangular init_action_stddev is too large for the requested init_action_center; "
                 "the implied symmetric low endpoint would be negative"
             )
+        if self.adaptive_learning_rate and self.adaptive_lr_epsilon is None:
+            raise ValueError("adaptive_lr_epsilon must be provided when adaptive_learning_rate is enabled")
+        if self.adaptive_learning_rate and self.adaptive_lr_epsilon <= 0.0:
+            raise ValueError("adaptive_lr_epsilon must be > 0")
+        if self.adaptive_lr_eta <= 0.0:
+            raise ValueError("adaptive_lr_eta must be > 0")
 
     # Fold types
     def states_fold_type(self):
@@ -535,4 +558,23 @@ class REINFORCE(AbstractPolicy, tf.keras.Model):
         if tf_grad_tape is None:
             raise Exception("No tf_grad_tape has been provided!")
         grads = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
+        grads_and_vars = [(g, v) for g, v in zip(grads, self.trainable_variables) if g is not None]
+        if not grads_and_vars:
+            self.last_grad_norm = 0.0
+            self.last_effective_learning_rate = None
+            return
+        if self.adaptive_lr_rule is None:
+            self.last_grad_norm = float(tf.linalg.global_norm([g for g, _ in grads_and_vars]).numpy())
+            self.last_effective_learning_rate = float(tf.convert_to_tensor(self.optimizer.learning_rate).numpy())
+            self.optimizer.apply_gradients(grads_and_vars)
+            return
+
+        effective_lr, grad_norm = self.adaptive_lr_rule.learning_rate([g for g, _ in grads_and_vars])
+        original_lr = self.optimizer.learning_rate
+        self.optimizer.learning_rate = effective_lr
+        try:
+            self.optimizer.apply_gradients(grads_and_vars)
+        finally:
+            self.optimizer.learning_rate = original_lr
+        self.last_grad_norm = float(grad_norm.numpy())
+        self.last_effective_learning_rate = float(effective_lr.numpy())

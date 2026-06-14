@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import matplotlib
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
@@ -223,3 +224,42 @@ def test_runner_writes_agent_label_without_experiment_label(tmp_path) -> None:
     assert "label" not in df.columns
     assert "agent_label" in df.columns
     assert set(df["agent_label"]) == {"FixedBid|Bid=5", "FixedBid|Bid=7"}
+
+
+def test_runner_writes_learning_rate_diagnostics(tmp_path) -> None:
+    def fake_train(env, num_of_trajs, horizon_cutoff, **kwargs):
+        for idx, agent in enumerate(env.agents):
+            agent.cumulative_rewards = [float(idx + 1)] * num_of_trajs
+            agent.policy.last_effective_learning_rate = 0.01 * (idx + 1)
+            agent.policy.last_grad_norm = 10.0 + idx
+
+    config = {
+        "num_days": 1,
+        "num_trajs": 2,
+        "num_epochs": 1,
+        "setup": "one_segment",
+        "agents": [
+            {
+                "name": "bidder_a",
+                "policy": "FixedBidPolicy",
+                "params": {"bid_per_item": 5, "total_limit": 5},
+            },
+            {
+                "name": "bidder_b",
+                "policy": "FixedBidPolicy",
+                "params": {"bid_per_item": 7, "total_limit": 7},
+            },
+        ],
+    }
+
+    with patch.object(one_camp_runner, "train", fake_train):
+        one_camp_runner.run_experiment_from_config(config, output_dir_override=str(tmp_path))
+
+    parquet_files = list(tmp_path.glob("epoch_agg__*.parquet"))
+    assert len(parquet_files) == 1
+    df = pd.read_parquet(parquet_files[0]).sort_values("agent_name").reset_index(drop=True)
+
+    assert "effective_learning_rate" in df.columns
+    assert "grad_norm" in df.columns
+    np.testing.assert_allclose(df["effective_learning_rate"], [0.01, 0.02])
+    np.testing.assert_allclose(df["grad_norm"], [10.0, 11.0])
