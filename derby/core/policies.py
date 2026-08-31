@@ -392,11 +392,9 @@ class DummyREINFORCE(AbstractPolicy, tf.keras.Model):
             gradients = tf_grad_tape.gradient(policy_loss, self.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
-# --- Unified REINFORCE import (expose for YAML configs) ---
-try:  # pragma: no cover
-    from derby.policies.reinforce import REINFORCE  # noqa: E402,F401
-except Exception:  # If dependency chain fails, keep module importable
-    REINFORCE = None  # type: ignore
+# --- Modern policy exports for YAML configs ---
+from derby.policies.reinforce import REINFORCE  # noqa: E402,F401
+from derby.policies.actor_critic import ActorCritic  # noqa: E402,F401
 
 
 class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
