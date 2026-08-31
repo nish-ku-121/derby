@@ -24,7 +24,7 @@ for i in range(num_of_trajs):
 
 ## Documentation quick links
 
-- Policies overview: see docs/Policies.md for a grouped rundown of all policies in `derby/core/policies.py`.
+- Policies overview: see docs/Policies.md for the supported modern policy surface.
 
 ---
 
@@ -133,8 +133,6 @@ print("Run ID:", run_id)
 
 Tip: If you want many variants, use the parallel sweeper below instead of hand-editing multiple YAMLs.
 
-Transition note: legacy experiment scripts and CSV-era utilities still live under `legacy/` during the migration to the new pathway. They are not part of the supported modern workflow and should only be consulted if something critical needs to be recovered while refactoring.
-
 ---
 
 ## Unified REINFORCE Policy
@@ -144,7 +142,7 @@ The legacy preset classes (`REINFORCE_PRESET_v1` .. `v4`) have been removed. All
 | Parameter | Purpose |
 |-----------|---------|
 | `learning_rate` | SGD learning rate |
-| `dist_type` | `gaussian` (default) or `lognormal` (triangular stub) |
+| `dist_type` | `gaussian` (default), `lognormal`, or `triangular` |
 | `actor_hidden_layers` / `actor_hidden_units` | Depth/width of actor MLP before param head |
 | `critic_hidden_layers` / `critic_hidden_units` | Depth/width of value network |
 | `actor_final_activation` | Activation applied to raw mean/sigma streams (`softplus`, `relu`, etc.) |
@@ -164,7 +162,7 @@ To replicate an old preset, identify its architecture (depth/width), activation,
 `ActorCritic` is the supported secondary modern learner. It shares the continuous stochastic actor machinery with `REINFORCE`, but uses a one-step TD state-value critic:
 
 - `critic_type: td` is the only first-class modern ActorCritic method.
-- Q-learning and SARSA actor-critic classes remain legacy compatibility code in `derby/core/policies.py`.
+- Q-learning and SARSA actor-critic variants are not part of the supported modern workflow.
 - ActorCritic always uses a state-value baseline; do not pass `use_baseline`.
 
 Minimal config:
@@ -201,7 +199,7 @@ The checked-in version is `configs/actor_critic_td_base.yaml`.
 
 ## Parameter Sweeps (modern two-step workflow)
 
-The old `pipeline.parallel_sweep` script is deprecated. Use the new config-grid + sweep-runner pipeline:
+Use the config-grid + sweep-runner pipeline:
 
 1. Author two YAML files:
      - A base experiment config: one valid experiment run config.
@@ -250,27 +248,18 @@ Behavior & features:
 - Failed or errored runs also get a per-run `failure.json` in their run directory with the captured error details.
 - Failures return a JSON summary (use `--json` for machine-readable output).
 
-Migration note: existing workflows using `parallel_sweep.py` still work temporarily but will be removed; switch to the above pattern.
-
----
-
 ## Repository layout (updated)
 
 - `derby/` — core library (environments, agents, auctions, markets, policies, utils)
 - `pipeline/` — modern, process-based runners and tools
     - `make_config_grid.py` — expand a sweep spec YAML into concrete experiment config files
     - `run_experiment_sweep.py` — run a directory of generated configs against an experiment module
-    - `parallel_sweep.py` — (deprecated) legacy single-step Cartesian sweeper
 - `utils/` — reusable helpers for analysis and plotting
     - `epoch_agg_loader.py` — list/load per-epoch Parquet files; basic policy summaries
     - `analysis.py` — load/filter/expand/inspect modern Parquet epoch aggregates
     - `paper_plot.py` — focused paper-quality learning-curve plotting from epoch aggregates
-    - `plot_utils.py` — legacy notebook convenience helpers during the plotting migration
-- `legacy/` — original CSV-based helpers and plotting for older experiments
-    - `plot_results.py`, `logs_to_csvs`, `csvs_to_plots`, `logs_to_plots`, `log_to_csv`
 - `configs/` — experiment/sweep YAML configuration (e.g., `base_sweep.yaml`, `grid_sweep_1.yaml`)
 - `notebooks/` — Jupyter notebooks for exploration/visualization
-- `scripts/` — convenience scripts (e.g., running grid sweeps)
 - `Dockerfile`, `Makefile`, `pyproject.toml`, `poetry.lock`
 
 Notes:
