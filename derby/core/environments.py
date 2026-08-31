@@ -19,14 +19,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
 
-_warned_legacy_kw = False
- # Legacy globals removed (model memory accounting disabled)
-
-def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, update_policies_after_every_step=False, **_ignored_legacy_kwargs):
-    global _warned_legacy_kw
-    if _ignored_legacy_kwargs and not _warned_legacy_kw:
-        logger.warning("Deprecated experiment kwarg(s) ignored: %s (legacy debug plumbing removed; set logging level instead)", list(_ignored_legacy_kwargs.keys()))
-        _warned_legacy_kw = True
+def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, update_policies_after_every_step=False):
     # Generate trajectories OUTSIDE any GradientTape to avoid recording the entire rollout graph.
     # This significantly reduces tape memory usage when horizon * num_of_trajs is large.
     states, actions, rewards = generate_trajectories(
@@ -85,7 +78,7 @@ def train(env, num_of_trajs, horizon_cutoff, scale_states_func=None, update_poli
 
 
 def generate_trajectories(env, num_of_trajs, horizon_cutoff, scale_states_func=None,
-                          update_policies_after_every_step=False, **_ignored):
+                          update_policies_after_every_step=False):
     """Generate batched trajectories (states, actions, rewards) with float32 upstream.
 
     Returns:

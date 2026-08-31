@@ -17,8 +17,10 @@ import tensorflow as tf
  
 from derby.experiments.one_camp_n_days.experiment import OneCampNDaysExperiment
 from derby.core.agents import Agent
-import derby.core.policies as policy_mod
 from derby.core.environments import train
+from derby.policies.actor_critic import ActorCritic
+from derby.policies.baselines import BudgetPerReachPolicy, FixedBidPolicy, StepPolicy
+from derby.policies.reinforce import REINFORCE
 
 # Module-level logger
 logger = logging.getLogger(__name__)
@@ -28,12 +30,12 @@ logger = logging.getLogger(__name__)
 # experiment family, revisit whether the config/orchestration pieces here
 # should be extracted into a reusable generic runner layer.
 
-SUPPORTED_POLICY_NAMES = {
-    "ActorCritic",
-    "REINFORCE",
-    "FixedBidPolicy",
-    "BudgetPerReachPolicy",
-    "StepPolicy",
+SUPPORTED_POLICIES = {
+    "ActorCritic": ActorCritic,
+    "REINFORCE": REINFORCE,
+    "FixedBidPolicy": FixedBidPolicy,
+    "BudgetPerReachPolicy": BudgetPerReachPolicy,
+    "StepPolicy": StepPolicy,
 }
 
 SUPPORTED_SETUPS = {
@@ -46,15 +48,14 @@ def _resolve_policy_class(name: str):
     """
     Resolve a policy class from the modern supported surface only.
     """
-    if name not in SUPPORTED_POLICY_NAMES:
-        supported = ", ".join(sorted(SUPPORTED_POLICY_NAMES))
+    try:
+        return SUPPORTED_POLICIES[name]
+    except KeyError:
+        supported = ", ".join(sorted(SUPPORTED_POLICIES))
         raise ValueError(
             f"Unsupported policy for one_camp_n_days runner: {name}. "
             f"Supported policies: {supported}"
-        )
-    if hasattr(policy_mod, name):
-        return getattr(policy_mod, name)
-    raise ValueError(f"Unknown supported policy class: {name}")
+        ) from None
 
 
 def _resolve_setup_function(experiment: OneCampNDaysExperiment, setup_name: str):
@@ -205,7 +206,7 @@ def run_experiment_from_config(
         agents:                          # list in execution order
             - name: agent1                 # optional; auto-generated if omitted
               label: REINFORCE             # optional; defaults to name
-              policy: FullPolicyClassName  # MUST exactly match symbol in derby.core.policies
+              policy: FullPolicyClassName  # MUST exactly match a supported policy name
               params:                      # kwargs passed to the policy __init__ (filtered)
                   learning_rate: 5e-6
                   shape_reward: false
@@ -228,14 +229,14 @@ def run_experiment_from_config(
           in unscaled action space at the config layer; if supplied and accepted by the policy constructor,
           this runner scales them before instantiating the policy.
         - State/action scaling applied ONLY to TensorFlow (learning) policies; baseline / static
-          policies (e.g., FixedBidPolicy) receive raw state/action data to maintain legacy semantics.
+          policies (e.g., FixedBidPolicy) receive raw state/action data.
         - Per-epoch metrics: mean & std (population, ddof=0) of per-trajectory rewards for each agent.
         - Logging: If an output directory is provided (via CLI -o/--output-dir), a parquet file with
           per-epoch rows is written containing config_hash, global_seed, agent_label, and reward stats.
         - config_hash: SHA256 over JSON dump of config minus non-semantic keys (label, logging) ensuring
           distinct seeds produce distinct hashes.
         - Returns: run_id (str) used in parquet filename.
-        - Unsupported: legacy exp_* experiment mappings; this runner only supports the simplified schema.
+        - Unsupported: historical exp_* experiment mappings; this runner only supports the simplified schema.
 
     Runtime / Non-YAML Parameters:
         flush_every (int, CLI only): Number of epochs between parquet flushes when an output
@@ -319,15 +320,9 @@ def run_experiment_from_config(
 
         policy_instance = policy_cls(**runtime_params)
 
-        # IMPORTANT:
-        # In the legacy experiment scripts, only learning (TF) policies received
-        # state normalization + action scaling/descaling. Baseline policies like
-        # FixedBidPolicy operated directly on raw state vectors (e.g. auction_item_spec_id)
-        # and produced already-descaled actions. Passing them through the scalers
-        # distorts spec IDs and bids, leading to incorrect rewards (e.g. the RL
-        # policy capturing almost all reward, others zero). We replicate the legacy
-        # behavior here: only TensorFlow policies (policy_instance.is_tensorflow == True)
-        # get the scalers.
+        # Only learning policies receive state normalization and action
+        # scaling/descaling. Static baselines operate directly on raw state
+        # vectors and already-descaled actions.
         if getattr(policy_instance, 'is_tensorflow', False):
             agent = Agent(name, policy_instance, scale_states_func, scale_actions_func, descale_actions_func)
         else:
@@ -343,7 +338,7 @@ def run_experiment_from_config(
         if global_seed is not None and hasattr(policy_instance, 'seed'):
             logger.info(f"[seed] policy={policy_name} agent={name} seed={getattr(policy_instance,'seed', None)}")
 
-    # Train loop (mirrors the legacy experiment runner but allows logging per epoch)
+    # Train loop with per-epoch aggregate logging.
     num_of_days = num_days
     num_of_trajs = num_trajs
     NUM_EPOCHS = num_epochs

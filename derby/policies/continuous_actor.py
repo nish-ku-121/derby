@@ -12,8 +12,8 @@ from typing import Tuple
 import numpy as np
 import tensorflow as tf
 
-from derby.core.policies import AbstractPolicy  # reuse base class
 from derby.core.environments import AbstractEnvironment
+from derby.policies.base import AbstractPolicy
 from derby.policies.update_rules import GradientNormAdaptiveLearningRate
 
 

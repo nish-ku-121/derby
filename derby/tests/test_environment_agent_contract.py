@@ -9,7 +9,8 @@ from derby.core.environments import (
     AbstractEnvironment,
     generate_trajectories,
 )
-from derby.core.policies import AbstractPolicy, FixedBidPolicy
+from derby.policies.baselines import FixedBidPolicy
+from derby.policies.base import AbstractPolicy
 from derby.experiments.one_camp_n_days.experiment import OneCampNDaysExperiment
 from derby.experiments.one_camp_n_days import runner as one_camp_runner
 

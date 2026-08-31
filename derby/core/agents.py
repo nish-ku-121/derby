@@ -3,7 +3,7 @@ import itertools
 import numpy as np
 import os
 import tensorflow as tf
-from derby.core.policies import AbstractPolicy
+from derby.policies.base import AbstractPolicy
 
 
 # Killing optional CPU driver warnings
