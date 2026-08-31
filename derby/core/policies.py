@@ -398,6 +398,11 @@ try:  # pragma: no cover
 except Exception:  # If dependency chain fails, keep module importable
     REINFORCE = None  # type: ignore
 
+try:  # pragma: no cover
+    from derby.policies.actor_critic import ActorCritic  # noqa: E402,F401
+except Exception:  # If dependency chain fails, keep module importable
+    ActorCritic = None  # type: ignore
+
 
 class REINFORCE_Gaussian_MarketEnv_Continuous(AbstractPolicy, tf.keras.Model):
 

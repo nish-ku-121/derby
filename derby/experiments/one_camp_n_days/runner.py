@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # should be extracted into a reusable generic runner layer.
 
 SUPPORTED_POLICY_NAMES = {
+    "ActorCritic",
     "REINFORCE",
     "FixedBidPolicy",
     "BudgetPerReachPolicy",
@@ -217,8 +218,9 @@ def run_experiment_from_config(
     Behavior / Notes:
         - Seeds: If 'seed' present it is validated & passed to `OneCampNDaysExperiment`; absent => stochastic run.
         - Policy parameter filtering: only kwargs accepted by the policy __init__ are forwarded.
-        - Supported policies in this runner are limited to unified `REINFORCE` and core deterministic
-          baselines (`FixedBidPolicy`, `BudgetPerReachPolicy`, `StepPolicy`).
+        - Supported policies in this runner are limited to modern learning policies
+          (`REINFORCE`, `ActorCritic`) and core deterministic baselines
+          (`FixedBidPolicy`, `BudgetPerReachPolicy`, `StepPolicy`).
         - Auto-injected params (if accepted and not already provided):
               auction_item_spec_ids.
         - Natural action-space scalar params such as `init_action_center`, `init_action_stddev`,

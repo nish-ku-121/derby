@@ -34,31 +34,6 @@ def load_epoch_agg_multi(paths: Iterable[str] | str) -> pd.DataFrame:
     return pd.concat(dfs, ignore_index=True)
 
 
-def filter_epoch_df(
-    df: pd.DataFrame,
-    *,
-    setup: Optional[str] = None,
-    agent_name: Optional[str] = None,
-    label: Optional[str] = None,
-    sort: bool = True,
-) -> pd.DataFrame:
-    if df is None or df.empty:
-        return df.copy()
-    mask = pd.Series(True, index=df.index)
-    if setup is not None and 'setup' in df.columns:
-        mask &= (df['setup'] == setup)
-    if agent_name is not None and 'agent_name' in df.columns:
-        mask &= (df['agent_name'] == agent_name)
-    if label is not None and 'label' in df.columns:
-        mask &= (df['label'] == label)
-    out = df[mask].copy()
-    if sort:
-        sort_cols = [c for c in ['policy_class', 'run_id', 'epoch'] if c in out.columns]
-        if sort_cols:
-            out = out.sort_values(sort_cols).reset_index(drop=True)
-    return out
-
-
 def extract_fields(
     df: pd.DataFrame,
     *,

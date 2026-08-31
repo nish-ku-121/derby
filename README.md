@@ -104,7 +104,7 @@ agents:
       # Optional advanced knob for the parameter-head kernel initializer
       # Omit to use the framework default.
       # param_kernel_initializer: glorot_uniform
-      dist_type: gaussian                # gaussian | lognormal | triangular (stub)
+      dist_type: gaussian                # gaussian | lognormal | triangular
       shape_reward: false                # if true: advantage shaping via log(1+r)
   - name: baseline
     label: FixedBid|Bid={agents.1.params.bid_per_item}|Limit={agents.1.params.total_limit}
@@ -155,9 +155,47 @@ The legacy preset classes (`REINFORCE_PRESET_v1` .. `v4`) have been removed. All
 | `shape_reward` | If true, applies `log(1+r)` shaping to positive rewards for variance reduction |
 | `seed` | Optional deterministic seed (Python, NumPy, TF generator) |
 
-Triangular distribution is a placeholder and raises `NotImplementedError` when sampled/log-prob requested.
-
 To replicate an old preset, identify its architecture (depth/width), activation, and sigma parameters and specify them directly.
+
+---
+
+## Modern ActorCritic Policy
+
+`ActorCritic` is the supported secondary modern learner. It shares the continuous stochastic actor machinery with `REINFORCE`, but uses a one-step TD state-value critic:
+
+- `critic_type: td` is the only first-class modern ActorCritic method.
+- Q-learning and SARSA actor-critic classes remain legacy compatibility code in `derby/core/policies.py`.
+- ActorCritic always uses a state-value baseline; do not pass `use_baseline`.
+
+Minimal config:
+```yaml
+num_days: 1
+num_trajs: 100
+num_epochs: 5
+setup: one_segment
+seed: 123
+agents:
+  - name: learner
+    label: ActorCritic|TD
+    policy: ActorCritic
+    params:
+      critic_type: td
+      critic_weight: 0.5
+      learning_rate: 1e-10
+      dist_type: gaussian
+      actor_hidden_layers: 4
+      actor_hidden_units: 4
+      critic_hidden_layers: 4
+      critic_hidden_units: 4
+  - name: baseline
+    label: FixedBid|Bid={agents.1.params.bid_per_item}|Limit={agents.1.params.total_limit}
+    policy: FixedBidPolicy
+    params:
+      bid_per_item: 5
+      total_limit: 5
+```
+
+The checked-in version is `configs/actor_critic_td_base.yaml`.
 
 ---
 

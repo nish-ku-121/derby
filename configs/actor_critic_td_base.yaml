@@ -1,0 +1,39 @@
+## Base experiment config for the modern one-step TD ActorCritic policy.
+# Use this as the canonical ActorCritic entrypoint for one_camp_n_days runs.
+
+num_days: 2
+num_trajs: 50
+num_epochs: 500
+setup: one_segment
+seed: 123
+agents:
+  - name: learner
+    label: ActorCritic|TD
+    policy: ActorCritic
+    params:
+      critic_type: td
+      critic_weight: 0.5
+      learning_rate: 1e-8
+      # Optional adaptive update magnitude control.
+      # adaptive_learning_rate: true
+      # adaptive_lr_epsilon: 1e-8
+      # adaptive_lr_eta: 1e-12
+      dist_type: gaussian # lognormal # triangular
+      shape_reward: false
+      actor_hidden_layers: 4
+      actor_hidden_units: 4
+      actor_hidden_activation: relu
+      actor_final_activation: relu
+      critic_hidden_layers: 4
+      critic_hidden_units: 4
+      critic_hidden_activation: relu
+      init_action_center: 10.0
+      init_action_stddev: 0.5
+      min_action_stddev: 0.1
+      param_kernel_initializer: zeros # glorot_uniform
+  - name: baseline
+    label: FixedBid|Bid={agents.1.params.bid_per_item}|Limit={agents.1.params.total_limit}
+    policy: FixedBidPolicy
+    params:
+      bid_per_item: 5
+      total_limit: 5
