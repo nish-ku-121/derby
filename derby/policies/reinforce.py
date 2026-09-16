@@ -16,6 +16,11 @@ from derby.policies.continuous_actor import ContinuousStochasticPolicy
 class REINFORCE(ContinuousStochasticPolicy):
     """Monte Carlo policy-gradient estimator over the shared continuous actor."""
 
+    def __init__(self, *args, **kwargs):
+        """Use ReLU hidden layers unless an experiment explicitly overrides them."""
+        kwargs.setdefault("actor_hidden_activation", "relu")
+        super().__init__(*args, **kwargs)
+
     def __repr__(self):
         return (
             "REINFORCE("

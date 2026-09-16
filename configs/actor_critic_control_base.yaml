@@ -1,0 +1,33 @@
+# Clean untreated one-step TD ActorCritic control.
+# Sweep specs override seed, learning rate, and epoch count as needed.
+
+num_days: 5
+num_trajs: 50
+num_epochs: 500
+setup: one_segment
+seed: 123
+agents:
+  - name: learner
+    label: ActorCritic|TD
+    policy: ActorCritic
+    params:
+      critic_type: td
+      critic_weight: 0.5
+      learning_rate: 1e-8
+      dist_type: gaussian
+      shape_reward: false
+      adaptive_learning_rate: false
+      actor_hidden_layers: 4
+      actor_hidden_units: 4
+      actor_hidden_activation: relu
+      actor_final_activation: relu
+      critic_hidden_layers: 4
+      critic_hidden_units: 4
+      critic_hidden_activation: relu
+      param_kernel_initializer: glorot_uniform
+  - name: baseline
+    label: FixedBid|Bid={agents.1.params.bid_per_item}|Limit={agents.1.params.total_limit}
+    policy: FixedBidPolicy
+    params:
+      bid_per_item: 5
+      total_limit: 5

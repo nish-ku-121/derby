@@ -141,7 +141,8 @@ The legacy preset classes (`REINFORCE_PRESET_v1` .. `v4`) have been removed. All
 
 | Parameter | Purpose |
 |-----------|---------|
-| `learning_rate` | SGD learning rate |
+| `learning_rate` | Optimizer learning rate |
+| `optimizer` | `sgd` (default) or `adam` |
 | `dist_type` | `gaussian` (default), `lognormal`, or `triangular` |
 | `actor_hidden_layers` / `actor_hidden_units` | Depth/width of actor MLP before param head |
 | `critic_hidden_layers` / `critic_hidden_units` | Depth/width of value network |

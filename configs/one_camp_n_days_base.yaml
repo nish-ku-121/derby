@@ -24,13 +24,14 @@ agents:
       # Explicit architecture (matches a simple baseline-style net)
       actor_hidden_layers: 4
       actor_hidden_units: 4
+      actor_hidden_activation: relu
       actor_final_activation: relu
       critic_hidden_layers: 4
       critic_hidden_units: 4
       # Optional explicit action-space initialization targets in natural units.
-      init_action_center: 10.0
-      init_action_stddev: 0.5
-      min_action_stddev: 0.1  # natural action units; runner scales before policy construction
+      # init_action_center: 10.0
+      # init_action_stddev: 0.5
+      # min_action_stddev: 0.1  # natural action units; runner scales before policy construction
       # Optional advanced knob for the parameter-head kernel initializer.
       # Omit to use the framework default.
       param_kernel_initializer: glorot_uniform # zeros

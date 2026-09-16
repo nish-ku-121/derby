@@ -23,9 +23,11 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+from collections import deque
 import json
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -138,11 +140,31 @@ def _run_one(
         }
     try:
         t0 = time.time()
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        output_tail: deque[str] = deque()
+        output_size = 0
+
+        def _drain_output() -> None:
+            nonlocal output_size
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                output_tail.append(line)
+                output_size += len(line)
+                while output_tail and output_size > MAX_STDERR_TAIL:
+                    output_size -= len(output_tail.popleft())
+
+        output_thread = threading.Thread(target=_drain_output, daemon=True)
+        output_thread.start()
         next_status_ts = t0 + status_interval if status_interval > 0 else None
         while True:
             try:
-                _stdout, stderr = proc.communicate(timeout=0.5)
+                proc.wait(timeout=0.5)
                 break
             except subprocess.TimeoutExpired:
                 pass
@@ -154,6 +176,8 @@ def _run_one(
                     flush=True,
                 )
                 next_status_ts += status_interval
+        output_thread.join()
+        stderr = ''.join(output_tail)
         end_ts = time.time()
         dt = end_ts - t0
         if proc.returncode == 0:

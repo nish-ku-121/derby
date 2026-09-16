@@ -1,0 +1,13 @@
+# ActorCritic controlled-action-initialization baseline.
+# Generate with pipeline.make_config_grid; run with parallelism 2.
+sweep_name: actor_critic_sweep_control_2
+base_config: configs/actor_critic_control_base.yaml
+override:
+  agents.0.label: "ActorCritic|TD|Control2|Init=zeros|Seed={seed}|LR={agents.0.params.learning_rate}|Center=10.0|Std=0.5|MinStd=0.1"
+  agents.0.params.param_kernel_initializer: zeros
+  agents.0.params.init_action_center: 10.0
+  agents.0.params.init_action_stddev: 0.5
+  agents.0.params.min_action_stddev: 0.1
+grid:
+  seed: [123, 456, 789]
+  agents.0.params.learning_rate: [1e-9, 1e-8, 1e-7]

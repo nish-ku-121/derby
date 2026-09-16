@@ -51,6 +51,13 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         values = policy.value_function(self.states)
         self.assertEqual(values.shape, (self.batch_size, self.time_steps - 1, 1))
 
+    def test_default_hidden_activation_is_relu(self):
+        policy = REINFORCE(
+            auction_item_spec_ids=self.auction_item_spec_ids,
+            num_dist_per_spec=self.num_dist,
+        )
+        self.assertEqual(policy._actor_hidden_activation_name, "relu")
+
     def test_gaussian_action_init_centers_primary_mean_and_stddev(self):
         init_action_center = 1.5
         init_action_stddev = 0.3
@@ -229,6 +236,19 @@ class TestUnifiedREINFORCE(unittest.TestCase):
             places=5,
         )
 
+    def test_optimizer_selection_defaults_to_sgd_and_accepts_adam(self):
+        default_policy = self._build_update_test_policy()
+        adam_policy = self._build_update_test_policy(optimizer='adam')
+
+        self.assertEqual(default_policy.optimizer_name, 'sgd')
+        self.assertIsInstance(default_policy.optimizer, tf.keras.optimizers.SGD)
+        self.assertEqual(adam_policy.optimizer_name, 'adam')
+        self.assertIsInstance(adam_policy.optimizer, tf.keras.optimizers.Adam)
+
+    def test_optimizer_selection_rejects_unknown_optimizer(self):
+        with self.assertRaisesRegex(ValueError, "optimizer must be one of"):
+            self._build_update_test_policy(optimizer='rmsprop')
+
     def test_adaptive_learning_rate_matches_sqrt_epsilon_update_norm(self):
         epsilon = 0.04
         eta = 1e-12
@@ -253,6 +273,28 @@ class TestUnifiedREINFORCE(unittest.TestCase):
             np.sqrt(epsilon),
             places=5,
         )
+
+    def test_adaptive_learning_rate_restores_optimizer_learning_rate(self):
+        learning_rate = 0.1
+        for optimizer in ("sgd", "adam"):
+            with self.subTest(optimizer=optimizer):
+                policy = self._build_update_test_policy(
+                    learning_rate=learning_rate,
+                    optimizer=optimizer,
+                    adaptive_learning_rate=True,
+                    adaptive_lr_epsilon=0.04,
+                    adaptive_lr_eta=1e-12,
+                )
+                with tf.GradientTape() as tape:
+                    loss = tf.add_n([tf.reduce_sum(v) for v in policy.trainable_variables])
+
+                policy.update(None, None, None, loss, tf_grad_tape=tape)
+
+                self.assertAlmostEqual(
+                    float(tf.convert_to_tensor(policy.optimizer.learning_rate).numpy()),
+                    learning_rate,
+                    places=7,
+                )
 
     def test_adaptive_learning_rate_tiny_gradient_is_finite(self):
         policy = self._build_update_test_policy(

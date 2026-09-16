@@ -1,0 +1,10 @@
+# Uncentered zero-head negative control; nine 50-epoch smoke runs.
+sweep_name: actor_critic_zero_head_negative_control_smoke
+base_config: configs/actor_critic_control_base.yaml
+override:
+  num_epochs: 50
+  agents.0.label: "ActorCritic|TD|ZeroHeadNegativeControl|Seed={seed}|LR={agents.0.params.learning_rate}"
+  agents.0.params.param_kernel_initializer: zeros
+grid:
+  seed: [123, 456, 789]
+  agents.0.params.learning_rate: [1e-9, 1e-8, 1e-7]
