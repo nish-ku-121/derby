@@ -435,6 +435,7 @@ class ContinuousStochasticPolicy(AbstractPolicy, tf.keras.Model):
         v = self.critic_out(x)
         return v
 
+    @tf.function(reduce_retracing=True)
     def choose_actions(self, call_output):
         if self.dist_type in ('gaussian', 'lognormal'):
             mus, sigmas = call_output

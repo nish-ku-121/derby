@@ -58,6 +58,19 @@ class TestUnifiedREINFORCE(unittest.TestCase):
         )
         self.assertEqual(policy._actor_hidden_activation_name, "relu")
 
+    def test_action_sampling_reuses_compiled_graph(self):
+        policy = REINFORCE(
+            auction_item_spec_ids=self.auction_item_spec_ids,
+            num_dist_per_spec=self.num_dist,
+            seed=123,
+        )
+        call_output = policy(self.states)
+
+        for _ in range(5):
+            policy.choose_actions(call_output)
+
+        self.assertEqual(policy.choose_actions.experimental_get_tracing_count(), 1)
+
     def test_gaussian_action_init_centers_primary_mean_and_stddev(self):
         init_action_center = 1.5
         init_action_stddev = 0.3
