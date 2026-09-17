@@ -1,0 +1,18 @@
+# 200-epoch continuation: extend ActorCritic fixed-Adam calibration above 1e-5.
+sweep_name: actor_critic_adam_high_rate_fixed_extension_smoke
+base_config: configs/actor_critic_control_base.yaml
+override:
+  agents.0.label: "ActorCritic|TD|AdamHighRateFixedExtensionSmoke|Seed={seed}|LR={agents.0.params.learning_rate}|Hidden={agents.0.params.actor_hidden_activation}|Final={agents.0.params.actor_final_activation}|Init={agents.0.params.param_kernel_initializer}"
+  num_epochs: 200
+  agents.0.params.shape_reward: false
+  agents.0.params.optimizer: adam
+  agents.0.params.adaptive_learning_rate: false
+  agents.0.params.param_kernel_initializer: zeros
+  agents.0.params.init_action_center: 10.0
+  agents.0.params.init_action_stddev: 0.5
+  agents.0.params.min_action_stddev: 0.1
+grid:
+  seed: [123]
+  agents.0.params.learning_rate: [3e-5, 1e-4, 3e-4, 1e-3]
+  agents.0.params.actor_hidden_activation: [relu]
+  agents.0.params.actor_final_activation: [softplus]
