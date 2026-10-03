@@ -42,6 +42,21 @@ Result = Dict[str, Any]
 PREFIX = "[run_experiment_sweep]"
 
 
+def _append_output_tail(tail: deque[str], size: int, text: str) -> int:
+    """Append output while retaining exactly the last ``MAX_STDERR_TAIL`` characters."""
+    tail.append(text)
+    size += len(text)
+    while tail and size > MAX_STDERR_TAIL:
+        excess = size - MAX_STDERR_TAIL
+        oldest = tail[0]
+        if len(oldest) <= excess:
+            size -= len(tail.popleft())
+        else:
+            tail[0] = oldest[excess:]
+            size -= excess
+    return size
+
+
 def _discover_configs(cfg_dir: Path) -> List[Path]:
     """Return sorted list of run config YAML files in a directory."""
     return sorted([p for p in cfg_dir.glob('*.yaml') if p.is_file()])
@@ -154,10 +169,7 @@ def _run_one(
             nonlocal output_size
             assert proc.stdout is not None
             for line in proc.stdout:
-                output_tail.append(line)
-                output_size += len(line)
-                while output_tail and output_size > MAX_STDERR_TAIL:
-                    output_size -= len(output_tail.popleft())
+                output_size = _append_output_tail(output_tail, output_size, line)
 
         output_thread = threading.Thread(target=_drain_output, daemon=True)
         output_thread.start()

@@ -524,10 +524,7 @@ def table_setting_rows(name, roots, initialization, activation, optimizer, setti
     for policy, baseline, baseline_label in conditions:
         for value in rates_or_eps[policy]:
             kwargs = {"rate": value} if setting_kind == "LR" else {"epsilon": value}
-            try:
-                sub = condition(data, policy, baseline, pair=pair, **kwargs)
-            except RuntimeError:
-                continue
+            sub = condition(data, policy, baseline, pair=pair, **kwargs)
             observed_seeds = set(pd.to_numeric(sub.global_seed, errors="coerce").dropna().astype(int))
             if observed_seeds != set(SEEDS):
                 raise RuntimeError(
@@ -669,26 +666,12 @@ def build_outcome_table() -> pd.DataFrame:
     rows += table_setting_rows("Isolated adaptive step size", ADAPTIVE_ROOTS, "Centered zero head", "ReLU / ReLU", "adaptive SGD", "epsilon", {"REINFORCE": [1e-8,1e-7,1e-6], "ActorCritic": [1e-8,1e-7,1e-6]}, 1000)
     rows += table_setting_rows("Combined treatment", COMBINED_ROOTS, "Centered zero head", "ReLU / softplus", "adaptive SGD", "epsilon", {"REINFORCE": [3e-6,1e-5,3e-5], "ActorCritic": [3e-6,1e-5,3e-5]}, 1000)
     table = pd.DataFrame(rows)
+    expected_rows = 104
+    if len(table) != expected_rows:
+        raise RuntimeError(f"expected {expected_rows} prescribed outcome-table cells, found {len(table)}")
     table.to_csv(TAB / "experiment_outcomes.csv", index=False)
 
     display_cols = ["experiment","algorithm","baseline","initialization","activation","optimizer","setting","n_seeds","horizon","seed_123","seed_456","seed_789"]
-    def markdown_table(frame: pd.DataFrame) -> str:
-        def cell(value):
-            return str(value).replace("|", "\\|").replace("\n", " ")
-        header = "| " + " | ".join(cell(c) for c in frame.columns) + " |"
-        rule = "| " + " | ".join("---" for _ in frame.columns) + " |"
-        body = ["| " + " | ".join(cell(v) for v in row) + " |" for row in frame.itertuples(index=False, name=None)]
-        return "\n".join([header, rule, *body])
-
-    markdown = [
-        "# Experiment outcome table",
-        "",
-        "Each row is one algorithm/configuration/setting cell. Seed outcomes are compact codes: `SH` sustained high reward; `DC` delayed reward collapse; `EC` early reward collapse; `ZI` zero from initialization; `FI` failed to reach informative reward; `LL` limited/low reward; `NF` numerical failure/blow-up. Numerical failure takes precedence and is never merged with reward collapse. The matched fixed-rate SGD-vs.-Adam family reports each optimizer's nominal learning rate; rates are calibrated separately and are not equivalent update scales.",
-        "",
-        markdown_table(table[display_cols]),
-        "",
-        "The machine-readable CSV also includes the exact source root for each setting row.",
-    ]
     # CSV is the canonical table source and LaTeX is consumed by the manuscript.
     # Deliberately do not emit a redundant Markdown rendering.
     latex_names = {

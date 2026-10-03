@@ -121,7 +121,7 @@ def _strip_nonsemantic_config_fields(value: Any) -> Any:
     return value
 
 
-def _compute_config_hash(config: Dict[str, Any]) -> str:
+def compute_config_hash(config: Dict[str, Any]) -> str:
     """Compute a deterministic hash of the config, excluding non-semantic fields."""
     cfg = _strip_nonsemantic_config_fields(config)
     # Stable string with sorted keys
@@ -351,7 +351,7 @@ def run_experiment_from_config(
 
     # Determine run identifier (allow caller to fix it, so failures can still be correlated)
     run_id = run_id or str(uuid.uuid4())
-    config_hash = _compute_config_hash(config)
+    config_hash = compute_config_hash(config)
     # Streaming parquet writer state
     writer = None  # type: ignore
     out_path = None

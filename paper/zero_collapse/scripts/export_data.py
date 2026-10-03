@@ -7,6 +7,7 @@ only fields needed to audit or redraw the paper figures and outcome table.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -21,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from utils.analysis import expand_policy_params, filter_epoch_rewards, load_epoch_rewards  # noqa: E402
 from pipeline.make_config_grid import generate_configs  # noqa: E402
+from derby.experiments.one_camp_n_days.runner import compute_config_hash  # noqa: E402
 
 
 OUT = ROOT / "paper" / "zero_collapse" / "data" / "reward_traces.parquet"
@@ -71,6 +73,11 @@ MATCHED_GROUPS = (
     ("reinforce_baseline_on_adam", "REINFORCE", "on", "adam", "baseline_on_full/reinforce_baseline_on_fixed_adam_matched_full"),
 )
 MATCHED_ROOT = ROOT / "results/staging/paper_followup/fixed_optimizer_matched"
+PROVENANCE_PARAM_KEYS = (
+    "learning_rate", "optimizer", "adaptive_learning_rate", "adaptive_lr_epsilon",
+    "actor_hidden_activation", "actor_final_activation", "param_kernel_initializer",
+    "init_action_center", "init_action_stddev", "min_action_stddev", "use_baseline",
+)
 
 
 def load_root(source_key: str, path: Path) -> pd.DataFrame:
@@ -90,6 +97,54 @@ def load_root(source_key: str, path: Path) -> pd.DataFrame:
 
 def _config_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _same_config_value(expected: object, observed: object) -> bool:
+    """Compare serialized config values without treating numeric strings as distinct."""
+    if expected is None or observed is None:
+        return expected is observed
+    if isinstance(expected, bool) or isinstance(observed, bool):
+        return expected is observed
+    try:
+        return bool(np.isclose(float(expected), float(observed), rtol=1e-12, atol=0.0))
+    except (TypeError, ValueError):
+        pass
+    return expected == observed
+
+
+def _provenance_mismatches(records: pd.DataFrame, config: dict[str, object], algorithm: str) -> list[str]:
+    """Return mismatches between a generated config and its recorded run evidence."""
+    mismatches: list[str] = []
+    expected_hash = compute_config_hash(config)
+    hashes = set(records.get("config_hash", pd.Series(dtype=str)).dropna().astype(str))
+    if hashes != {expected_hash}:
+        mismatches.append(f"config_hash expected {expected_hash}, observed {sorted(hashes)}")
+
+    learner = records[records.agent_name.eq("learner")].copy()
+    policies = set(learner.get("policy_class", pd.Series(dtype=str)).dropna().astype(str))
+    if policies != {algorithm}:
+        mismatches.append(f"learner policy_class expected {algorithm}, observed {sorted(policies)}")
+
+    expected_seed = config.get("seed")
+    seeds = set(pd.to_numeric(learner.get("global_seed", pd.Series(dtype=float)), errors="coerce").dropna().astype(int))
+    if expected_seed is None or seeds != {int(expected_seed)}:
+        mismatches.append(f"global_seed expected {expected_seed}, observed {sorted(seeds)}")
+
+    expected_params = config["agents"][0]["params"]
+    if "policy_params_json" not in learner:
+        return [*mismatches, "missing learner policy_params_json"]
+    try:
+        recorded_params = [json.loads(value) for value in learner.policy_params_json.dropna().unique()]
+    except (TypeError, json.JSONDecodeError) as exc:
+        return [*mismatches, f"invalid learner policy_params_json: {exc}"]
+    if not recorded_params:
+        return [*mismatches, "missing learner policy parameters"]
+    for key in PROVENANCE_PARAM_KEYS:
+        if key not in expected_params:
+            continue
+        if not all(key in params and _same_config_value(expected_params[key], params[key]) for params in recorded_params):
+            mismatches.append(f"policy parameter {key!r} disagrees with generated config")
+    return mismatches
 
 
 def _classify_matched(rewards: pd.Series, *, complete: bool, numerical: bool) -> tuple[str, float, float]:
@@ -136,7 +191,8 @@ def extract_matched_optimizer_data() -> tuple[pd.DataFrame, pd.DataFrame]:
                     "algorithm": algorithm, "baseline": baseline, "optimizer": optimizer,
                     "run": run, "seed": seed, "learning_rate": rate,
                     "config_path": f"sweeps/{spec.stem}/configs/{run}.yaml",
-                    "config_sha256": _config_hash(config_path), "result_dir": str(run_dir.relative_to(ROOT)),
+                    "config_sha256": _config_hash(config_path), "expected_config_hash": compute_config_hash(config),
+                    "result_dir": str(run_dir.relative_to(ROOT)),
                     "completion_record": (run_dir / "_RUN_COMPLETE.json").exists(),
                     "failure_record": (run_dir / "failure.json").exists(),
                     "parquet_count": len(parquet), "config_mismatches": "",
@@ -148,7 +204,12 @@ def extract_matched_optimizer_data() -> tuple[pd.DataFrame, pd.DataFrame]:
                     audits.append(audit)
                     continue
                 learner = pd.read_parquet(parquet[0])
-                learner = learner[learner.policy_class.eq(algorithm)].sort_values("epoch").copy()
+                mismatches = _provenance_mismatches(learner, config, algorithm)
+                audit["config_mismatches"] = "; ".join(mismatches)
+                if mismatches:
+                    audits.append(audit)
+                    raise RuntimeError(f"{group}/{run}: result provenance mismatch: {audit['config_mismatches']}")
+                learner = learner[learner.agent_name.eq("learner") & learner.policy_class.eq(algorithm)].sort_values("epoch").copy()
                 rewards = pd.to_numeric(learner["mean_reward"], errors="coerce")
                 epochs = pd.to_numeric(learner["epoch"], errors="coerce")
                 complete = bool(np.array_equal(epochs.to_numpy(dtype=int), np.arange(1000)))

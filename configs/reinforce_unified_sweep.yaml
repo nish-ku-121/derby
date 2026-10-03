@@ -1,0 +1,19 @@
+# Sweep specification for the README's unified REINFORCE example.
+sweep_name: reinforce_unified_demo
+base_config: configs/one_camp_n_days_base.yaml
+override:
+  agents.0.policy: REINFORCE
+  agents.0.label: "{agents.0.policy}|Baseline={agents.0.params.use_baseline}|D={agents.0.params.dist_type}|A={agents.0.params.actor_hidden_layers}x{agents.0.params.actor_hidden_units}|C={agents.0.params.critic_hidden_layers}x{agents.0.params.critic_hidden_units}|Act={agents.0.params.actor_hidden_activation}>{agents.0.params.actor_final_activation}|BaseLR={agents.0.params.learning_rate}|Adaptive={agents.0.params.adaptive_learning_rate}|Eps={agents.0.params.adaptive_lr_epsilon}|Eta={agents.0.params.adaptive_lr_eta}"
+  num_trajs: 100
+  num_epochs: 100
+grid:
+  agents.0.params.learning_rate: [1e-6]
+  agents.0.params.adaptive_learning_rate: [false, true]
+  agents.0.params.adaptive_lr_epsilon: [1e-6, 1e-7, 1e-8]
+  agents.0.params.adaptive_lr_eta: [1e-12]
+  agents.0.params.dist_type: [gaussian]
+  agents.0.params.actor_hidden_activation: [relu]
+  agents.0.params.actor_final_activation: [relu]
+  agents.0.params.use_baseline: [true, false]
+restrict:
+  # max_combinations: 3
