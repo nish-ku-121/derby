@@ -1,0 +1,91 @@
+{
+  "experiment": "actor_critic_sweep_control_2",
+  "source_config": "configs/actor_critic_sweep_control_2.yaml",
+  "source_config_selection": {
+    "seed": 456,
+    "learning_rate": 1e-08
+  },
+  "algorithm": "current ActorCritic one-step TD state-value critic",
+  "optimizer": "fixed-rate SGD",
+  "learning_rate": 1e-08,
+  "seed": 456,
+  "selected_epoch_zero_based": 224,
+  "updates_completed": 225,
+  "selection_rationale": "pre-specified near the retained run's last nonzero epoch 247",
+  "fixed_raw_joint_state": {
+    "field_order_per_bidder": [
+      "reach",
+      "budget",
+      "target_spec_id",
+      "spend",
+      "impressions",
+      "timestep"
+    ],
+    "learner": [
+      10.0,
+      100.0,
+      2.0,
+      5.0,
+      1.0,
+      3.0
+    ],
+    "baseline": [
+      10.0,
+      100.0,
+      2.0,
+      10.0,
+      2.0,
+      3.0
+    ]
+  },
+  "fixed_swept_action": {
+    "total_limit": 100.0,
+    "bid_range": [
+      0.0,
+      10.0
+    ]
+  },
+  "competitor": {
+    "policy": "FixedBidPolicy",
+    "bid": 5.0,
+    "total_limit": 5.0
+  },
+  "discount_factor": 1.0,
+  "reference_formula": "Q^pi(s,a) = E[r_t + r_{t+1} | s_t=s, a_t=a, then learned policy pi]",
+  "critic_implied_formula": "Qhat_TD(s,a) = E[r_t + V_w(s_{t+1}) | s_t=s, a_t=a]",
+  "terminal_bootstrap": 0.0,
+  "reference_estimator": "analytic current transition plus Monte Carlo final learned-policy action",
+  "monte_carlo_samples_per_next_state": 50000,
+  "tie_at_bid_5": "equal-probability allocation between the two tied bidders",
+  "branch_estimates": {
+    "lose": {
+      "continuation_mean": 10.012767630500793,
+      "continuation_se": 0.0011143617168811928
+    },
+    "win_at_cliff": {
+      "continuation_mean": 20.012195873336793,
+      "continuation_se": 0.0010897816467063445
+    },
+    "win_at_bid_10": {
+      "continuation_mean": 20.01367690861702,
+      "continuation_se": 0.0011545474425739425
+    },
+    "v_lose": 0.0008483246783725917
+  },
+  "retained_rerun_reward_comparison": {
+    "0": {
+      "retained": 0.033313676714897156,
+      "rerun": 0.07222686767578125,
+      "absolute_difference": 0.038913190960884095
+    },
+    "224": {
+      "retained": 0.0,
+      "rerun": 0.0,
+      "absolute_difference": 0.0
+    }
+  },
+  "outputs": {
+    "figure": "paper/zero_collapse/figures/fig6_td_value_critic_diagnostic.pdf",
+    "data": "paper/zero_collapse/data/td_value_critic_diagnostic.csv"
+  }
+}

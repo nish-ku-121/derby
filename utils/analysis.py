@@ -149,6 +149,45 @@ def last_epoch_table(
     return rows
 
 
+def aggregate_seed_curves(
+    df: pd.DataFrame,
+    *,
+    group_cols: Sequence[str],
+    seed_col: str = "global_seed",
+    epoch_col: str = "epoch",
+    reward_col: str = "mean_reward",
+) -> pd.DataFrame:
+    """Return equal-seed reward summaries for each group and epoch.
+
+    Every seed contributes exactly one row per epoch. This is deliberately
+    separate from rollout-level ``std_reward``, which measures within-run
+    trajectory variation.
+    """
+    required = set(group_cols) | {seed_col, epoch_col, reward_col}
+    missing = required - set(df.columns)
+    if missing:
+        raise KeyError(f"missing required columns: {sorted(missing)}")
+    keys = [*group_cols, seed_col]
+    duplicates = df.duplicated([*keys, epoch_col], keep=False)
+    if duplicates.any():
+        examples = df.loc[duplicates, [*keys, epoch_col]].head(8).to_dict("records")
+        raise ValueError(f"duplicate run/epoch rows: {examples}")
+    summary = (
+        df.groupby([*group_cols, epoch_col], as_index=False, dropna=False)[reward_col]
+        .agg(["mean", "min", "max", "count"])
+        .rename(
+            columns={
+                "mean": "seed_mean",
+                "min": "seed_min",
+                "max": "seed_max",
+                "count": "seed_count",
+            }
+        )
+        .reset_index()
+    )
+    return summary.sort_values([*group_cols, epoch_col]).reset_index(drop=True)
+
+
 def inspect_epoch_rewards(root: str | os.PathLike) -> dict[str, object]:
     """Collect a compact, printable summary for a result root."""
     files = list_parquet_files(root)

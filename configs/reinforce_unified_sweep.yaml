@@ -1,28 +1,19 @@
-# Sweep specification for unified REINFORCE policy.
-# Generate concrete configs with:
-#   make run ARGS="python -u -m pipeline.make_config_grid --spec configs/reinforce_unified_sweep.yaml --output-dir sweeps/reinforce_unified_demo/configs"
-
+# Sweep specification for the README's unified REINFORCE example.
 sweep_name: reinforce_unified_demo
 base_config: configs/one_camp_n_days_base.yaml
-# Static overrides applied before each combo
 override:
   agents.0.policy: REINFORCE
   agents.0.label: "{agents.0.policy}|Baseline={agents.0.params.use_baseline}|D={agents.0.params.dist_type}|A={agents.0.params.actor_hidden_layers}x{agents.0.params.actor_hidden_units}|C={agents.0.params.critic_hidden_layers}x{agents.0.params.critic_hidden_units}|Act={agents.0.params.actor_hidden_activation}>{agents.0.params.actor_final_activation}|BaseLR={agents.0.params.learning_rate}|Adaptive={agents.0.params.adaptive_learning_rate}|Eps={agents.0.params.adaptive_lr_epsilon}|Eta={agents.0.params.adaptive_lr_eta}"
   num_trajs: 100
   num_epochs: 100
-  # Force learner seed (optional)
-  # seed: 123
 grid:
   agents.0.params.learning_rate: [1e-6]
   agents.0.params.adaptive_learning_rate: [false, true]
   agents.0.params.adaptive_lr_epsilon: [1e-6, 1e-7, 1e-8]
   agents.0.params.adaptive_lr_eta: [1e-12]
-  agents.0.params.dist_type: [gaussian] #, lognormal, triangular]
-  # agents.0.params.actor_hidden_layers: [1, 4]
-  # agents.0.params.actor_hidden_units: [1, 4]
-  agents.0.params.actor_hidden_activation: [relu] #, leaky_relu, elu]
-  agents.0.params.actor_final_activation: [relu] #, softplus]
+  agents.0.params.dist_type: [gaussian]
+  agents.0.params.actor_hidden_activation: [relu]
+  agents.0.params.actor_final_activation: [relu]
   agents.0.params.use_baseline: [true, false]
-# Optional restrictions
 restrict:
-  # max_combinations: 3     # cut off if grid grows big or set to 1 for smoke tests
+  # max_combinations: 3

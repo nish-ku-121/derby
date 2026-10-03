@@ -1,0 +1,25 @@
+# Long-horizon isolated adaptive step-rate treatment on top of REINFORCE Control 2.
+sweep_name: reinforce_adaptive_step_rate_1000ep
+base_config: configs/one_camp_n_days_base.yaml
+override:
+  agents.0.policy: REINFORCE
+  agents.0.label: "{agents.0.policy}|AdaptiveStepRate1000ep|Seed={seed}|Baseline={agents.0.params.use_baseline}|Init={agents.0.params.param_kernel_initializer}|Eps={agents.0.params.adaptive_lr_epsilon}|Eta={agents.0.params.adaptive_lr_eta}|BaseLRPlaceholder={agents.0.params.learning_rate}|Hidden={agents.0.params.actor_hidden_activation}|Final={agents.0.params.actor_final_activation}"
+  num_days: 5
+  num_trajs: 50
+  num_epochs: 1000
+  agents.0.params.learning_rate: 1e-6
+  agents.0.params.optimizer: sgd
+  agents.0.params.shape_reward: false
+  agents.0.params.adaptive_learning_rate: true
+  agents.0.params.adaptive_lr_eta: 1e-12
+  agents.0.params.init_action_center: 10.0
+  agents.0.params.init_action_stddev: 0.5
+  agents.0.params.min_action_stddev: 0.1
+grid:
+  seed: [123, 456, 789]
+  agents.0.params.adaptive_lr_epsilon: [1e-8, 1e-7, 1e-6]
+  agents.0.params.dist_type: [gaussian]
+  agents.0.params.actor_hidden_activation: [relu]
+  agents.0.params.actor_final_activation: [relu]
+  agents.0.params.use_baseline: [false, true]
+  agents.0.params.param_kernel_initializer: [zeros]

@@ -11,7 +11,7 @@ matplotlib.use("Agg")
 
 from derby.experiments.one_camp_n_days import runner as one_camp_runner
 from pipeline.make_config_grid import generate_configs
-from utils.analysis import expand_policy_params, last_epoch_table
+from utils.analysis import aggregate_seed_curves, expand_policy_params, last_epoch_table
 from utils.paper_plot import VarianceConfig, plot_learning_curves
 
 import matplotlib.pyplot as plt  # noqa: E402
@@ -122,6 +122,22 @@ def test_plot_learning_curves_rejects_duplicate_curve_epoch_rows() -> None:
 
     with pytest.raises(ValueError, match="Duplicate rows"):
         plot_learning_curves(df)
+
+
+def test_aggregate_seed_curves_is_equal_seed_summary() -> None:
+    df = pd.DataFrame(
+        [
+            {"group": "a", "global_seed": 123, "epoch": 0, "mean_reward": 1.0},
+            {"group": "a", "global_seed": 456, "epoch": 0, "mean_reward": 3.0},
+        ]
+    )
+
+    summary = aggregate_seed_curves(df, group_cols=("group",))
+
+    assert summary.loc[0, "seed_mean"] == 2.0
+    assert summary.loc[0, "seed_min"] == 1.0
+    assert summary.loc[0, "seed_max"] == 3.0
+    assert summary.loc[0, "seed_count"] == 2
 
 
 def test_make_config_grid_renders_agent_label_templates(tmp_path) -> None:

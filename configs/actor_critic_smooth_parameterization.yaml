@@ -1,0 +1,16 @@
+# Smooth final policy parameterization on top of ActorCritic Control 2.
+sweep_name: actor_critic_smooth_parameterization
+base_config: configs/actor_critic_control_base.yaml
+override:
+  agents.0.label: "ActorCritic|TD|SmoothParam|Seed={seed}|Hidden={agents.0.params.actor_hidden_activation}|Final={agents.0.params.actor_final_activation}|LR={agents.0.params.learning_rate}|Init={agents.0.params.param_kernel_initializer}"
+  agents.0.params.param_kernel_initializer: zeros
+  agents.0.params.init_action_center: 10.0
+  agents.0.params.init_action_stddev: 0.5
+  agents.0.params.min_action_stddev: 0.1
+  agents.0.params.shape_reward: false
+  agents.0.params.adaptive_learning_rate: false
+grid:
+  seed: [123, 456, 789]
+  agents.0.params.learning_rate: [1e-9, 1e-8, 1e-7]
+  agents.0.params.actor_hidden_activation: [relu, elu]
+  agents.0.params.actor_final_activation: [softplus]

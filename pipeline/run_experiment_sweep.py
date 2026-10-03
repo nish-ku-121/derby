@@ -23,9 +23,11 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+from collections import deque
 import json
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +40,21 @@ MAX_STDERR_TAIL = 5000  # max chars of stderr tail we retain for failures
 
 Result = Dict[str, Any]
 PREFIX = "[run_experiment_sweep]"
+
+
+def _append_output_tail(tail: deque[str], size: int, text: str) -> int:
+    """Append output while retaining exactly the last ``MAX_STDERR_TAIL`` characters."""
+    tail.append(text)
+    size += len(text)
+    while tail and size > MAX_STDERR_TAIL:
+        excess = size - MAX_STDERR_TAIL
+        oldest = tail[0]
+        if len(oldest) <= excess:
+            size -= len(tail.popleft())
+        else:
+            tail[0] = oldest[excess:]
+            size -= excess
+    return size
 
 
 def _discover_configs(cfg_dir: Path) -> List[Path]:
@@ -138,11 +155,28 @@ def _run_one(
         }
     try:
         t0 = time.time()
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        output_tail: deque[str] = deque()
+        output_size = 0
+
+        def _drain_output() -> None:
+            nonlocal output_size
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                output_size = _append_output_tail(output_tail, output_size, line)
+
+        output_thread = threading.Thread(target=_drain_output, daemon=True)
+        output_thread.start()
         next_status_ts = t0 + status_interval if status_interval > 0 else None
         while True:
             try:
-                _stdout, stderr = proc.communicate(timeout=0.5)
+                proc.wait(timeout=0.5)
                 break
             except subprocess.TimeoutExpired:
                 pass
@@ -154,6 +188,8 @@ def _run_one(
                     flush=True,
                 )
                 next_status_ts += status_interval
+        output_thread.join()
+        stderr = ''.join(output_tail)
         end_ts = time.time()
         dt = end_ts - t0
         if proc.returncode == 0:

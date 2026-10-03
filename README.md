@@ -28,6 +28,33 @@ for i in range(num_of_trajs):
 
 ---
 
+## Zero-collapse paper artifacts
+
+The tracked bundle in [`paper/zero_collapse/`](paper/zero_collapse/) accompanies
+*Zero Collapse: A Failure Mode of Policy Gradient Methods in Discontinuous
+Reward Environments*. Read the paper for the research narrative and
+interpretation; this repository provides the runnable implementation and the
+versioned artifacts behind its empirical figures and table.
+
+Start with [`paper/zero_collapse/SOURCES.md`](paper/zero_collapse/SOURCES.md)
+for the figure-to-config mapping. The bundle contains paper-numbered empirical
+figures, normalized supporting data, the manuscript-consumed table, and the
+scripts that render them. Figure 1 is a conceptual schematic in the manuscript,
+so it has no Derby-generated counterpart.
+
+To regenerate the ordinary figures and table from the committed normalized data:
+
+```bash
+make run ARGS="python paper/zero_collapse/scripts/build_outputs.py"
+```
+
+The data-extraction and critic-diagnostic scripts are maintainer workflows: they
+require the intentionally untracked raw `results/` tree. Experiment and sweep
+specifications remain under [`configs/`](configs/), including the exact
+matched-optimizer configurations used for the paper.
+
+---
+
 ## Game Description
 
 A *market* can be thought of as a stateful, repeated auction:
@@ -141,7 +168,8 @@ The legacy preset classes (`REINFORCE_PRESET_v1` .. `v4`) have been removed. All
 
 | Parameter | Purpose |
 |-----------|---------|
-| `learning_rate` | SGD learning rate |
+| `learning_rate` | Optimizer learning rate |
+| `optimizer` | `sgd` (default) or `adam` |
 | `dist_type` | `gaussian` (default), `lognormal`, or `triangular` |
 | `actor_hidden_layers` / `actor_hidden_units` | Depth/width of actor MLP before param head |
 | `critic_hidden_layers` / `critic_hidden_units` | Depth/width of value network |
@@ -248,7 +276,7 @@ Behavior & features:
 - Failed or errored runs also get a per-run `failure.json` in their run directory with the captured error details.
 - Failures return a JSON summary (use `--json` for machine-readable output).
 
-## Repository layout (updated)
+## Repository layout
 
 - `derby/` — core library (environments, agents, auctions, markets, policies, utils)
 - `pipeline/` — modern, process-based runners and tools
@@ -264,6 +292,8 @@ Behavior & features:
 
 Notes:
 - The repository does not track `results/` in git; it's reserved for run outputs (Parquet, JSONL, etc.).
+- `paper/zero_collapse/` contains the versioned empirical paper bundle; its `SOURCES.md` records artifact provenance and reproduction notes.
+- The paper bundle tracks reduced, inspectable artifacts rather than the full raw experiment-output tree.
 - Update any local scripts to import from `utils.*` or execute from `pipeline/*` instead of `results.*`.
 
 ## Rebuilding the Poetry Lock File

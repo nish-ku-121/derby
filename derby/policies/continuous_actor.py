@@ -48,6 +48,7 @@ class ContinuousStochasticPolicy(AbstractPolicy, tf.keras.Model):
                  critic_hidden_layers: int = 1, critic_hidden_units: int = 6,
                  critic_hidden_activation='relu',
                  use_baseline: bool = True,
+                 optimizer: str = 'sgd',
                  adaptive_learning_rate: bool = False,
                  adaptive_lr_epsilon: float | None = None,
                  adaptive_lr_eta: float = 1e-8):
@@ -77,6 +78,7 @@ class ContinuousStochasticPolicy(AbstractPolicy, tf.keras.Model):
         self._actor_hidden_activation_fn, self._actor_hidden_activation_name = self._resolve_activation(actor_hidden_activation)
         self._critic_hidden_activation_fn, self._critic_hidden_activation_name = self._resolve_activation(critic_hidden_activation)
         self.use_baseline = bool(use_baseline)
+        self.optimizer_name = str(optimizer).lower()
         self.adaptive_learning_rate = bool(adaptive_learning_rate)
         self.adaptive_lr_epsilon = None if adaptive_lr_epsilon is None else float(adaptive_lr_epsilon)
         self.adaptive_lr_eta = float(adaptive_lr_eta)
@@ -123,7 +125,10 @@ class ContinuousStochasticPolicy(AbstractPolicy, tf.keras.Model):
         else:
             raise ValueError(f"Unsupported dist_type '{self.dist_type}'. Choose gaussian | lognormal | triangular")
 
-        self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
+        if self.optimizer_name == 'sgd':
+            self.optimizer = tf.keras.optimizers.SGD(learning_rate=self.learning_rate)
+        else:
+            self.optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
 
         # Actor hidden stack (can be empty if actor_hidden_layers == 0)
         self.actor_hidden = []
@@ -287,6 +292,7 @@ class ContinuousStochasticPolicy(AbstractPolicy, tf.keras.Model):
             f"actor_depth={self.actor_hidden_layers}, actor_width={self.actor_hidden_units}, actor_act={self._actor_hidden_activation_name}, "
             f"use_baseline={self.use_baseline}, critic_depth={self.critic_hidden_layers}, critic_width={self.critic_hidden_units}, "
             f"critic_act={self._critic_hidden_activation_name}, adaptive_learning_rate={self.adaptive_learning_rate}, "
+            f"optimizer_name={self.optimizer_name}, "
             f"adaptive_lr_epsilon={self.adaptive_lr_epsilon}, adaptive_lr_eta={self.adaptive_lr_eta})"
         )
 
@@ -348,6 +354,8 @@ class ContinuousStochasticPolicy(AbstractPolicy, tf.keras.Model):
             raise ValueError("adaptive_lr_epsilon must be > 0")
         if self.adaptive_lr_eta <= 0.0:
             raise ValueError("adaptive_lr_eta must be > 0")
+        if self.optimizer_name not in {'sgd', 'adam'}:
+            raise ValueError("optimizer must be one of: sgd, adam")
 
     # Fold types
     def states_fold_type(self):
@@ -427,6 +435,7 @@ class ContinuousStochasticPolicy(AbstractPolicy, tf.keras.Model):
         v = self.critic_out(x)
         return v
 
+    @tf.function(reduce_retracing=True)
     def choose_actions(self, call_output):
         if self.dist_type in ('gaussian', 'lognormal'):
             mus, sigmas = call_output
@@ -544,7 +553,7 @@ class ContinuousStochasticPolicy(AbstractPolicy, tf.keras.Model):
             return
 
         effective_lr, grad_norm = self.adaptive_lr_rule.learning_rate([g for g, _ in grads_and_vars])
-        original_lr = self.optimizer.learning_rate
+        original_lr = tf.identity(self.optimizer.learning_rate)
         self.optimizer.learning_rate = effective_lr
         try:
             self.optimizer.apply_gradients(grads_and_vars)
