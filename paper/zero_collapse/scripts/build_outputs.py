@@ -553,12 +553,12 @@ def table_setting_rows(name, roots, initialization, activation, optimizer, setti
 
 
 def matched_optimizer_outcome(trace: pd.DataFrame, audit_row: pd.Series) -> str:
-    """Classify a Fig. 6 raw reward trace with the table's established codes.
+    """Classify a Fig. 8 raw reward trace with the table's established codes.
 
-    The published Fig. 6 audit is also consulted for completion/configuration
+    The published Fig. 8 audit is also consulted for completion/configuration
     failures, while reward outcomes are classified from the recorded trajectory
     using the same thresholds as ``trace_metrics``.  This avoids treating the
-    Fig. 6 aggregate audit labels as a substitute for seed-level evidence.
+    Fig. 8 aggregate audit labels as a substitute for seed-level evidence.
     """
     reward = pd.to_numeric(trace.mean_reward, errors="coerce")
     finite = reward[np.isfinite(reward)]
@@ -596,7 +596,7 @@ def matched_optimizer_outcome(trace: pd.DataFrame, audit_row: pd.Series) -> str:
 
 
 def matched_fixed_optimizer_rows() -> list[dict[str, object]]:
-    """Read the configuration-audited Fig. 6 runs and produce 18 setting rows.
+    """Read the configuration-audited Fig. 8 runs and produce 18 setting rows.
 
     This family was intentionally calibrated per optimizer; its nominal rates
     are displayed independently and are never merged into a shared scale.
@@ -612,13 +612,13 @@ def matched_fixed_optimizer_rows() -> list[dict[str, object]]:
         "complete_epochs", "finite_metrics", "fixed_rate_identity", "outcome",
     }
     if missing := required_audit - set(audit.columns):
-        raise RuntimeError(f"Fig. 6 audit is missing columns: {sorted(missing)}")
+        raise RuntimeError(f"Fig. 8 audit is missing columns: {sorted(missing)}")
     keys = ["group", "algorithm", "baseline", "optimizer", "learning_rate"]
     rows = []
     for key, setting_audit in audit.groupby(keys, sort=True, dropna=False):
         group, algorithm, baseline, optimizer, learning_rate = key
         if len(setting_audit) != len(SEEDS) or set(setting_audit.seed.astype(int)) != set(SEEDS):
-            raise RuntimeError(f"Fig. 6 setting lacks the three intended seeds: {key}")
+            raise RuntimeError(f"Fig. 8 setting lacks the three intended seeds: {key}")
         seed_codes: dict[int, str] = {}
         source_roots = []
         for audit_row in setting_audit.itertuples(index=False):
@@ -628,7 +628,7 @@ def matched_fixed_optimizer_rows() -> list[dict[str, object]]:
                 & (traces.global_seed.eq(audit_row.seed))
             ]
             if trace.empty:
-                raise RuntimeError(f"Fig. 6 trace missing for {audit_row.group}/{audit_row.run}/seed={audit_row.seed}")
+                raise RuntimeError(f"Fig. 8 trace missing for {audit_row.group}/{audit_row.run}/seed={audit_row.seed}")
             seed_codes[int(audit_row.seed)] = matched_optimizer_outcome(trace, pd.Series(audit_row._asdict()))
             source_roots.append("matched_fixed_optimizer")
         baseline_label = "state-value critic" if algorithm == "ActorCritic" else str(baseline)
@@ -645,7 +645,7 @@ def matched_fixed_optimizer_rows() -> list[dict[str, object]]:
             "source_root": "; ".join(sorted(set(source_roots))),
         })
     if len(rows) != 18:
-        raise RuntimeError(f"expected 18 Fig. 6 matched optimizer settings, found {len(rows)}")
+        raise RuntimeError(f"expected 18 Fig. 8 matched optimizer settings, found {len(rows)}")
     return rows
 
 
