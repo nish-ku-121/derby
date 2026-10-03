@@ -19,20 +19,24 @@ for i in range(num_of_trajs):
                 actions.append(agent.compute_action(agent_states))
             all_agents_states, rewards, done = env.step(actions)
 ```
-
 ---
 
-## Documentation quick links
+## Game Description
 
-- Policies overview: see docs/Policies.md for the supported modern policy surface.
+A *market* can be thought of as a stateful, repeated auction:
+
+-   A market is initialized with *m* bidders, each of which has a state.
+-   A market lasts for *N* days.
+-   Each day, auction items are put on sale. Each day, the bidders participate in an auction for the available items.
+-   Each bidder’s state is updated at the end of every day. The state can track information such as auction items bought and amount spent.
 
 ---
 
 ## Zero-collapse paper artifacts
 
 The tracked bundle in [`paper/zero_collapse/`](paper/zero_collapse/) accompanies
-*Zero Collapse: A Failure Mode of Policy Gradient Methods in Discontinuous
-Reward Environments*. Read the paper for the research narrative and
+[*Zero Collapse: A Failure Mode of Policy Gradient Methods in Discontinuous
+Reward Environments*](https://arxiv.org/abs/2605.30896). Read the paper for the research narrative and
 interpretation; this repository provides the runnable implementation and the
 versioned artifacts behind its empirical figures and table.
 
@@ -53,18 +57,6 @@ require the intentionally untracked raw `results/` tree. Experiment and sweep
 specifications remain under [`configs/`](configs/), including the exact
 matched-optimizer configurations used for the paper.
 
----
-
-## Game Description
-
-A *market* can be thought of as a stateful, repeated auction:
-
--   A market is initialized with *m* bidders, each of which has a state.
--   A market lasts for *N* days.
--   Each day, auction items are put on sale. Each day, the bidders participate in an auction for the available items.
--   Each bidder’s state is updated at the end of every day. The state can track information such as auction items bought and amount spent.
-
----
 
 ## First Time Install
 
@@ -303,18 +295,6 @@ If you change dependencies in `pyproject.toml`, you may want to regenerate the `
 make lockfile
 ```
 This will update `poetry.lock` to match the dependencies in `pyproject.toml` using Docker for a fully reproducible environment.
-
----
-
-## Project Background
-
-Derby was created by [Nishant Kumar](https://github.com/nish-ku-121) for use in his grad school research project (in collaboration with Prof. Amy Greenwald and fellow student [Enrique Areyan](https://github.com/eareyan)).
-
-See [AdX RL Research Summary](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Summary.pdf) for a brief summary.
-
-The goal of the project was to apply (deep) reinforcement learning to the _AdX Game_. The AdX Game crudely models the digital advertising domain: advertisers buy _impression opportunities_ from websites, where the objective of each advertiser is to minimize spend and the objective of each website is to maximize revenue. This buying and selling is usually done through an _ad exchange_ (e.g. Google's AdX), which canonically holds digital auctions; the bidders are advertisers and the goods being sold are impression opportunities. In the AdX Game, each player plays the role of an _advertiser liaison_: advertisers procure _ad campaigns_ to liaisons, who are responsible for fulfilling the campaign within a certain time frame. The goal of each player is to learn what bids to place in order to maximize their profit by the end of the game.
-
-(See pages 2 to 3 of [AdX RL Research Summary](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Summary.pdf) for the game definition)
 
 
 ---
