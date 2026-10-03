@@ -1,0 +1,121 @@
+% Requires \usepackage{longtable,pdflscape,array}
+\begin{landscape}
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{longtable}{>{\raggedright\arraybackslash}p{1.90cm}>{\raggedright\arraybackslash}p{1.85cm}>{\raggedright\arraybackslash}p{1.70cm}>{\raggedright\arraybackslash}p{2.05cm}>{\raggedright\arraybackslash}p{1.35cm}>{\raggedright\arraybackslash}p{1.25cm}>{\raggedright\arraybackslash}p{2.10cm}>{\centering\arraybackslash}p{.45cm}>{\centering\arraybackslash}p{.80cm}>{\centering\arraybackslash}p{.65cm}>{\centering\arraybackslash}p{.65cm}>{\centering\arraybackslash}p{.65cm}}
+\caption{Qualitative outcomes by experiment configuration and seed. Each row is one hyperparameter setting. Codes: SH sustained high; DC delayed collapse; EC early collapse; ZI zero from initialization; FI failed to reach informative reward; LL limited/low reward; NF numerical failure. In the matched fixed-rate SGD--Adam family, nominal rates are optimizer-specific calibrated settings, not equivalent update scales.}\label{tab:rl_experiment_outcomes}\\
+Experiment & Algorithm & Baseline / critic & Initialization & Activation & Optimizer & Setting & $n$ & Epochs & Seed 123 & Seed 456 & Seed 789 \\
+\hline
+\endfirsthead
+Experiment & Algorithm & Baseline / critic & Initialization & Activation & Optimizer & Setting & $n$ & Epochs & Seed 123 & Seed 456 & Seed 789 \\
+\hline
+\endhead
+Untreated initialization & REINFORCE & off & Glorot, uncentered & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & ZI & ZI & ZI \\
+Untreated initialization & REINFORCE & off & Glorot, uncentered & ReLU / ReLU & SGD & LR=1e-06 & 3 & 500 & ZI & ZI & ZI \\
+Untreated initialization & REINFORCE & off & Glorot, uncentered & ReLU / ReLU & SGD & LR=1e-05 & 3 & 500 & ZI & ZI & ZI \\
+Untreated initialization & REINFORCE & on & Glorot, uncentered & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & ZI & ZI & ZI \\
+Untreated initialization & REINFORCE & on & Glorot, uncentered & ReLU / ReLU & SGD & LR=1e-06 & 3 & 500 & ZI & ZI & ZI \\
+Untreated initialization & REINFORCE & on & Glorot, uncentered & ReLU / ReLU & SGD & LR=1e-05 & 3 & 500 & EC & ZI & ZI \\
+Untreated initialization & ActorCritic & state-value critic & Glorot, uncentered & ReLU / ReLU & SGD & LR=1e-09 & 3 & 500 & NF & ZI & ZI \\
+Untreated initialization & ActorCritic & state-value critic & Glorot, uncentered & ReLU / ReLU & SGD & LR=1e-08 & 3 & 500 & NF & ZI & ZI \\
+Untreated initialization & ActorCritic & state-value critic & Glorot, uncentered & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & NF & ZI & ZI \\
+Bias-centered Glorot & REINFORCE & off & Glorot with centered bias & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & EC & DC & ZI \\
+Bias-centered Glorot & REINFORCE & off & Glorot with centered bias & ReLU / ReLU & SGD & LR=1e-06 & 3 & 500 & FI & EC & ZI \\
+Bias-centered Glorot & REINFORCE & off & Glorot with centered bias & ReLU / ReLU & SGD & LR=1e-05 & 3 & 500 & NF & NF & ZI \\
+Bias-centered Glorot & REINFORCE & on & Glorot with centered bias & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & EC & DC & ZI \\
+Bias-centered Glorot & REINFORCE & on & Glorot with centered bias & ReLU / ReLU & SGD & LR=1e-06 & 3 & 500 & FI & EC & ZI \\
+Bias-centered Glorot & REINFORCE & on & Glorot with centered bias & ReLU / ReLU & SGD & LR=1e-05 & 3 & 500 & NF & NF & ZI \\
+Bias-centered Glorot & ActorCritic & state-value critic & Glorot with centered bias & ReLU / ReLU & SGD & LR=1e-09 & 3 & 500 & FI & SH & ZI \\
+Bias-centered Glorot & ActorCritic & state-value critic & Glorot with centered bias & ReLU / ReLU & SGD & LR=1e-08 & 3 & 500 & FI & DC & ZI \\
+Bias-centered Glorot & ActorCritic & state-value critic & Glorot with centered bias & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & NF & EC & ZI \\
+Control 2 & REINFORCE & off & Centered zero head & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & EC & EC & EC \\
+Control 2 & REINFORCE & off & Centered zero head & ReLU / ReLU & SGD & LR=1e-06 & 3 & 500 & EC & EC & LL \\
+Control 2 & REINFORCE & off & Centered zero head & ReLU / ReLU & SGD & LR=1e-05 & 3 & 500 & FI & FI & FI \\
+Control 2 & REINFORCE & on & Centered zero head & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & EC & EC & EC \\
+Control 2 & REINFORCE & on & Centered zero head & ReLU / ReLU & SGD & LR=1e-06 & 3 & 500 & EC & EC & LL \\
+Control 2 & REINFORCE & on & Centered zero head & ReLU / ReLU & SGD & LR=1e-05 & 3 & 500 & FI & FI & FI \\
+Control 2 & ActorCritic & state-value critic & Centered zero head & ReLU / ReLU & SGD & LR=1e-09 & 3 & 500 & SH & SH & SH \\
+Control 2 & ActorCritic & state-value critic & Centered zero head & ReLU / ReLU & SGD & LR=1e-08 & 3 & 500 & DC & DC & DC \\
+Control 2 & ActorCritic & state-value critic & Centered zero head & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & EC & EC & EC \\
+Smooth parameterization & REINFORCE & off & Centered zero head & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & EC & EC & EC \\
+Smooth parameterization & REINFORCE & off & Centered zero head & ReLU / ReLU & SGD & LR=1e-06 & 3 & 500 & EC & EC & LL \\
+Smooth parameterization & REINFORCE & off & Centered zero head & ReLU / ReLU & SGD & LR=1e-05 & 3 & 500 & FI & FI & FI \\
+Smooth parameterization & REINFORCE & on & Centered zero head & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & EC & EC & EC \\
+Smooth parameterization & REINFORCE & on & Centered zero head & ReLU / ReLU & SGD & LR=1e-06 & 3 & 500 & EC & EC & LL \\
+Smooth parameterization & REINFORCE & on & Centered zero head & ReLU / ReLU & SGD & LR=1e-05 & 3 & 500 & FI & FI & FI \\
+Smooth parameterization & ActorCritic & state-value critic & Centered zero head & ReLU / ReLU & SGD & LR=1e-09 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & ActorCritic & state-value critic & Centered zero head & ReLU / ReLU & SGD & LR=1e-08 & 3 & 500 & DC & DC & DC \\
+Smooth parameterization & ActorCritic & state-value critic & Centered zero head & ReLU / ReLU & SGD & LR=1e-07 & 3 & 500 & EC & EC & EC \\
+Smooth parameterization & REINFORCE & off & Centered zero head & ReLU / softplus & SGD & LR=1e-07 & 3 & 500 & LL & SH & SH \\
+Smooth parameterization & REINFORCE & off & Centered zero head & ReLU / softplus & SGD & LR=1e-06 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & REINFORCE & off & Centered zero head & ReLU / softplus & SGD & LR=1e-05 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & REINFORCE & on & Centered zero head & ReLU / softplus & SGD & LR=1e-07 & 3 & 500 & LL & LL & SH \\
+Smooth parameterization & REINFORCE & on & Centered zero head & ReLU / softplus & SGD & LR=1e-06 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & REINFORCE & on & Centered zero head & ReLU / softplus & SGD & LR=1e-05 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & SGD & LR=1e-09 & 3 & 500 & FI & FI & FI \\
+Smooth parameterization & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & SGD & LR=1e-08 & 3 & 500 & LL & FI & FI \\
+Smooth parameterization & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & SGD & LR=1e-07 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & REINFORCE & off & Centered zero head & ELU / softplus & SGD & LR=1e-07 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & REINFORCE & off & Centered zero head & ELU / softplus & SGD & LR=1e-06 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & REINFORCE & off & Centered zero head & ELU / softplus & SGD & LR=1e-05 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & REINFORCE & on & Centered zero head & ELU / softplus & SGD & LR=1e-07 & 3 & 500 & SH & LL & SH \\
+Smooth parameterization & REINFORCE & on & Centered zero head & ELU / softplus & SGD & LR=1e-06 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & REINFORCE & on & Centered zero head & ELU / softplus & SGD & LR=1e-05 & 3 & 500 & SH & SH & SH \\
+Smooth parameterization & ActorCritic & state-value critic & Centered zero head & ELU / softplus & SGD & LR=1e-09 & 3 & 500 & FI & FI & FI \\
+Smooth parameterization & ActorCritic & state-value critic & Centered zero head & ELU / softplus & SGD & LR=1e-08 & 3 & 500 & LL & FI & LL \\
+Smooth parameterization & ActorCritic & state-value critic & Centered zero head & ELU / softplus & SGD & LR=1e-07 & 3 & 500 & SH & SH & SH \\
+Fixed high-rate SGD & REINFORCE & off & Centered zero head & ReLU / softplus & SGD & LR=3e-04 & 3 & 200 & FI & FI & FI \\
+Fixed high-rate SGD & REINFORCE & off & Centered zero head & ReLU / softplus & SGD & LR=1e-03 & 3 & 200 & FI & FI & NF \\
+Fixed high-rate SGD & REINFORCE & on & Centered zero head & ReLU / softplus & SGD & LR=3e-04 & 3 & 200 & NF & FI & FI \\
+Fixed high-rate SGD & REINFORCE & on & Centered zero head & ReLU / softplus & SGD & LR=1e-03 & 3 & 200 & NF & FI & NF \\
+Fixed high-rate SGD & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & SGD & LR=3e-04 & 3 & 200 & FI & NF & FI \\
+Fixed high-rate SGD & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & SGD & LR=1e-03 & 3 & 200 & FI & EC & FI \\
+Fixed high-rate SGD & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & SGD & LR=3e-03 & 3 & 200 & FI & FI & FI \\
+Fixed high-rate Adam & REINFORCE & off & Centered zero head & ReLU / softplus & Adam & LR=3e-04 & 3 & 1000 & SH & LL & SH \\
+Fixed high-rate Adam & REINFORCE & off & Centered zero head & ReLU / softplus & Adam & LR=1e-03 & 3 & 1000 & SH & SH & SH \\
+Fixed high-rate Adam & REINFORCE & on & Centered zero head & ReLU / softplus & Adam & LR=3e-04 & 3 & 1000 & SH & LL & SH \\
+Fixed high-rate Adam & REINFORCE & on & Centered zero head & ReLU / softplus & Adam & LR=1e-03 & 3 & 1000 & SH & SH & SH \\
+Fixed high-rate Adam & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & Adam & LR=3e-04 & 3 & 1000 & DC & SH & SH \\
+Fixed high-rate Adam & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & Adam & LR=1e-03 & 3 & 1000 & DC & SH & DC \\
+Fixed high-rate Adam & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & Adam & LR=3e-03 & 3 & 1000 & EC & DC & EC \\
+Matched fixed-rate SGD vs. Adam & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & Adam & LR=3e-04 & 3 & 1000 & DC & SH & SH \\
+Matched fixed-rate SGD vs. Adam & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & Adam & LR=1e-03 & 3 & 1000 & DC & SH & DC \\
+Matched fixed-rate SGD vs. Adam & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & Adam & LR=3e-03 & 3 & 1000 & EC & DC & EC \\
+Matched fixed-rate SGD vs. Adam & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & SGD & LR=1e-07 & 3 & 1000 & SH & SH & SH \\
+Matched fixed-rate SGD vs. Adam & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & SGD & LR=1e-06 & 3 & 1000 & DC & DC & DC \\
+Matched fixed-rate SGD vs. Adam & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & SGD & LR=1e-05 & 3 & 1000 & EC & EC & EC \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & off & Centered zero head & ReLU / softplus & Adam & LR=3e-04 & 3 & 1000 & SH & LL & SH \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & off & Centered zero head & ReLU / softplus & Adam & LR=3e-03 & 3 & 1000 & SH & SH & SH \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & off & Centered zero head & ReLU / softplus & Adam & LR=1e-02 & 3 & 1000 & SH & SH & EC \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & off & Centered zero head & ReLU / softplus & SGD & LR=1e-07 & 3 & 1000 & SH & SH & SH \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & off & Centered zero head & ReLU / softplus & SGD & LR=1e-05 & 3 & 1000 & SH & SH & SH \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & off & Centered zero head & ReLU / softplus & SGD & LR=1e-04 & 3 & 1000 & EC & DC & FI \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & on & Centered zero head & ReLU / softplus & Adam & LR=3e-04 & 3 & 1000 & SH & LL & SH \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & on & Centered zero head & ReLU / softplus & Adam & LR=3e-03 & 3 & 1000 & SH & SH & SH \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & on & Centered zero head & ReLU / softplus & Adam & LR=1e-02 & 3 & 1000 & SH & SH & LL \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & on & Centered zero head & ReLU / softplus & SGD & LR=1e-07 & 3 & 1000 & SH & SH & SH \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & on & Centered zero head & ReLU / softplus & SGD & LR=1e-05 & 3 & 1000 & SH & SH & SH \\
+Matched fixed-rate SGD vs. Adam & REINFORCE & on & Centered zero head & ReLU / softplus & SGD & LR=1e-04 & 3 & 1000 & FI & NF & FI \\
+Isolated adaptive step size & REINFORCE & off & Centered zero head & ReLU / ReLU & adaptive SGD & epsilon=1e-08 & 3 & 1000 & SH & SH & SH \\
+Isolated adaptive step size & REINFORCE & off & Centered zero head & ReLU / ReLU & adaptive SGD & epsilon=1e-07 & 3 & 1000 & SH & SH & SH \\
+Isolated adaptive step size & REINFORCE & off & Centered zero head & ReLU / ReLU & adaptive SGD & epsilon=1e-06 & 3 & 1000 & SH & SH & SH \\
+Isolated adaptive step size & REINFORCE & on & Centered zero head & ReLU / ReLU & adaptive SGD & epsilon=1e-08 & 3 & 1000 & SH & SH & SH \\
+Isolated adaptive step size & REINFORCE & on & Centered zero head & ReLU / ReLU & adaptive SGD & epsilon=1e-07 & 3 & 1000 & SH & SH & SH \\
+Isolated adaptive step size & REINFORCE & on & Centered zero head & ReLU / ReLU & adaptive SGD & epsilon=1e-06 & 3 & 1000 & SH & SH & SH \\
+Isolated adaptive step size & ActorCritic & state-value critic & Centered zero head & ReLU / ReLU & adaptive SGD & epsilon=1e-08 & 3 & 1000 & LL & SH & SH \\
+Isolated adaptive step size & ActorCritic & state-value critic & Centered zero head & ReLU / ReLU & adaptive SGD & epsilon=1e-07 & 3 & 1000 & SH & SH & SH \\
+Isolated adaptive step size & ActorCritic & state-value critic & Centered zero head & ReLU / ReLU & adaptive SGD & epsilon=1e-06 & 3 & 1000 & DC & DC & SH \\
+Combined treatment & REINFORCE & off & Centered zero head & ReLU / softplus & adaptive SGD & epsilon=3e-06 & 3 & 1000 & SH & SH & SH \\
+Combined treatment & REINFORCE & off & Centered zero head & ReLU / softplus & adaptive SGD & epsilon=1e-05 & 3 & 1000 & SH & SH & SH \\
+Combined treatment & REINFORCE & off & Centered zero head & ReLU / softplus & adaptive SGD & epsilon=3e-05 & 3 & 1000 & SH & SH & SH \\
+Combined treatment & REINFORCE & on & Centered zero head & ReLU / softplus & adaptive SGD & epsilon=3e-06 & 3 & 1000 & SH & LL & SH \\
+Combined treatment & REINFORCE & on & Centered zero head & ReLU / softplus & adaptive SGD & epsilon=1e-05 & 3 & 1000 & SH & SH & SH \\
+Combined treatment & REINFORCE & on & Centered zero head & ReLU / softplus & adaptive SGD & epsilon=3e-05 & 3 & 1000 & SH & SH & SH \\
+Combined treatment & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & adaptive SGD & epsilon=3e-06 & 3 & 1000 & SH & SH & SH \\
+Combined treatment & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & adaptive SGD & epsilon=1e-05 & 3 & 1000 & DC & SH & DC \\
+Combined treatment & ActorCritic & state-value critic & Centered zero head & ReLU / softplus & adaptive SGD & epsilon=3e-05 & 3 & 1000 & DC & DC & DC \\
+\end{longtable}
+\endgroup
+\end{landscape}

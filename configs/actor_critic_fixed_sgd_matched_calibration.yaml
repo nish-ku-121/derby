@@ -1,0 +1,21 @@
+# Prospective fixed-SGD calibration for the matched optimizer comparison.
+sweep_name: actor_critic_fixed_sgd_matched_calibration
+base_config: configs/actor_critic_control_base.yaml
+override:
+  num_days: 5
+  num_trajs: 50
+  num_epochs: 200
+  agents.0.label: "ActorCritic|TD|MatchedCalibration|Optimizer=SGD|Seed={seed}|LR={agents.0.params.learning_rate}"
+  agents.0.params.optimizer: sgd
+  agents.0.params.adaptive_learning_rate: false
+  agents.0.params.shape_reward: false
+  agents.0.params.actor_hidden_activation: relu
+  agents.0.params.actor_final_activation: softplus
+  agents.0.params.param_kernel_initializer: zeros
+  agents.0.params.init_action_center: 10.0
+  agents.0.params.init_action_stddev: 0.5
+  agents.0.params.min_action_stddev: 0.1
+grid:
+  seed: [123, 456, 789]
+  agents.0.params.learning_rate: [1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 3e-4]
+  agents.0.params.dist_type: [gaussian]
