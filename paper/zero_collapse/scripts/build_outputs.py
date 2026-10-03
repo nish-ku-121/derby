@@ -19,7 +19,7 @@ from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 
-from utils.rl_paper_analysis import aggregate_seed_curves
+from utils.analysis import aggregate_seed_curves
 
 ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "paper" / "zero_collapse"

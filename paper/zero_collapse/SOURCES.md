@@ -13,8 +13,8 @@ training results remain intentionally excluded from Git.
 | Figure 5: combined treatment | `figures/fig5_combined_treatment.pdf` | `configs/reinforce_combined_sgd_high_epsilon.yaml`; `configs/actor_critic_combined_sgd_high_epsilon.yaml` |
 | Figure 6: TD-$V$ diagnostic | `figures/fig6_td_value_critic_diagnostic.pdf` | `configs/actor_critic_sweep_control_2.yaml`, seed 456, learning rate `1e-8`, zero-based epoch 224 |
 | Figure 7: full smooth-parameterization factorial | `figures/fig7_smooth_parameterization_full.pdf` | Figure 2 and Figure 4 specifications |
-| Figure 8: matched fixed-optimizer comparison | `figures/fig8_matched_fixed_optimizer.pdf` | the fourteen `*_matched_*.yaml` specifications under `configs/` |
-| Table 4: qualitative outcomes | `tables/experiment_outcomes.{csv,tex}` | the configurations above plus the untreated, bias-centered, and fixed-rate supporting controls listed in `scripts/export_data.py` |
+| Figure 8: matched fixed-optimizer comparison | `figures/fig8_matched_fixed_optimizer.pdf` | `configs/reinforce_fixed_sgd_matched_full.yaml`; `configs/reinforce_fixed_adam_matched_full.yaml`; `configs/actor_critic_fixed_sgd_matched_full.yaml`; `configs/actor_critic_fixed_adam_matched_full.yaml`; `configs/reinforce_baseline_on_fixed_sgd_matched_full.yaml`; `configs/reinforce_baseline_on_fixed_adam_matched_full.yaml` |
+| Table 4: qualitative outcomes | `tables/experiment_outcomes.{csv,tex}` | the configurations above plus `configs/reinforce_sweep_control.yaml`; `configs/actor_critic_sweep_control.yaml`; `configs/reinforce_sweep_treatment_action_centering.yaml`; `configs/actor_critic_sweep_bias_centered_glorot.yaml`; `configs/reinforce_sgd_high_rate_fixed_smoke.yaml`; `configs/actor_critic_sgd_high_rate_fixed_smoke.yaml`; `configs/reinforce_adam_high_rate_fixed_full.yaml`; `configs/actor_critic_adam_high_rate_fixed_full.yaml` |
 
 The paper's Figure 1 is a conceptual threshold-payoff schematic authored in the
 manuscript; it is not an empirical Derby output.

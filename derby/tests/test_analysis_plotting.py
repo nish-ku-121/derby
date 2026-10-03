@@ -11,9 +11,8 @@ matplotlib.use("Agg")
 
 from derby.experiments.one_camp_n_days import runner as one_camp_runner
 from pipeline.make_config_grid import generate_configs
-from utils.analysis import expand_policy_params, last_epoch_table
+from utils.analysis import aggregate_seed_curves, expand_policy_params, last_epoch_table
 from utils.paper_plot import VarianceConfig, plot_learning_curves
-from utils.rl_paper_analysis import aggregate_seed_curves, run_outcomes
 
 import matplotlib.pyplot as plt  # noqa: E402
 
@@ -123,30 +122,6 @@ def test_plot_learning_curves_rejects_duplicate_curve_epoch_rows() -> None:
 
     with pytest.raises(ValueError, match="Duplicate rows"):
         plot_learning_curves(df)
-
-
-def test_run_outcomes_requires_complete_final_window_for_collapse() -> None:
-    df = pd.DataFrame(
-        [
-            {"run_id": "complete-collapse", "epoch": 0, "mean_reward": 1.0},
-            {"run_id": "complete-collapse", "epoch": 1, "mean_reward": 0.0},
-            {"run_id": "complete-collapse", "epoch": 2, "mean_reward": 0.0},
-            {"run_id": "partial", "epoch": 0, "mean_reward": 0.0},
-            {"run_id": "partial", "epoch": 1, "mean_reward": 0.0},
-            {"run_id": "all-zero", "epoch": 0, "mean_reward": 0.0},
-            {"run_id": "all-zero", "epoch": 1, "mean_reward": 0.0},
-            {"run_id": "all-zero", "epoch": 2, "mean_reward": 0.0},
-        ]
-    )
-
-    outcomes = run_outcomes(df, expected_epochs=3, final_window=2).set_index("run_id")
-
-    assert outcomes.loc["complete-collapse", "complete"]
-    assert outcomes.loc["complete-collapse", "trailing_zero_collapse"]
-    assert not outcomes.loc["partial", "trailing_zero_collapse"]
-    assert outcomes.loc["partial", "zero_from_initialization"]
-    assert outcomes.loc["all-zero", "zero_from_initialization"]
-    assert not outcomes.loc["all-zero", "trailing_zero_collapse"]
 
 
 def test_aggregate_seed_curves_is_equal_seed_summary() -> None:
