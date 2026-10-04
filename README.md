@@ -25,8 +25,7 @@ In Derby, a market is modeled as a stateful sequence of auctions:
 The `one_campaign_n_days` scenario family supports one- and two-segment
 variants. Learning agents can use REINFORCE or a one-step TD actor-critic; fixed
 bid, budget-per-reach, and step policies are available as deterministic
-baselines. See [the policy guide](docs/Policies.md) for the supported policy
-surface.
+baselines.
 
 Here, a **scenario family** defines the overall task, while a
 `scenario_variant` selects a concrete environment specification within that
