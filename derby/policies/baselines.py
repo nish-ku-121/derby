@@ -1,4 +1,4 @@
-"""Deterministic baseline policies for Derby experiments."""
+"""Deterministic baseline policies for Derby training runs."""
 from __future__ import annotations
 
 import numpy as np

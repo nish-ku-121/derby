@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate concrete experiment configs from a sweep spec.
+"""Generate concrete run configs from a sweep spec.
 
 Minimal spec keys:
     sweep_name (str, required)
@@ -14,7 +14,7 @@ paths, for example:
 
 Example:
     sweep_name: demo
-    base_config: configs/one_camp_n_days_base.yaml
+    base_config: configs/one_campaign_n_days_base.yaml
     override:
         agents.0.policy: REINFORCE
     grid:
@@ -227,7 +227,7 @@ def generate_configs(spec_path: str, output_dir: str) -> None:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate a concrete experiment-config grid from a sweep spec")
+    ap = argparse.ArgumentParser(description="Generate a concrete run-config grid from a sweep spec")
     ap.add_argument('--spec', required=True, help='Path to sweep spec YAML')
     ap.add_argument('--output-dir', required=True, help='Directory to write generated run_<n>.yaml configs')
     args = ap.parse_args()

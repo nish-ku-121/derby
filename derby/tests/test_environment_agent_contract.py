@@ -7,12 +7,13 @@ import tensorflow as tf
 from derby.core.agents import Agent
 from derby.core.environments import (
     AbstractEnvironment,
+    OneCampaignNDaysEnv,
     generate_trajectories,
 )
 from derby.policies.baselines import FixedBidPolicy
 from derby.policies.base import AbstractPolicy
-from derby.experiments.one_camp_n_days.experiment import OneCampNDaysExperiment
-from derby.experiments.one_camp_n_days import runner as one_camp_runner
+from derby.scenarios.one_campaign_n_days.scenario import OneCampaignNDaysScenarioFactory
+from derby.scenarios.one_campaign_n_days import runner as one_campaign_runner
 
 
 class RecordingTensorflowPolicy(AbstractPolicy):
@@ -101,11 +102,20 @@ class JointStatePolicy(AbstractPolicy):
 
 class TestEnvironmentAgentContract(unittest.TestCase):
     def setUp(self):
-        self.experiment = OneCampNDaysExperiment(seed=123)
+        self.scenario_factory = OneCampaignNDaysScenarioFactory(seed=123)
+
+    def test_scenario_factory_builds_and_validates_named_variants(self):
+        scenario = self.scenario_factory.build("one_segment")
+
+        self.assertEqual(scenario.variant, "one_segment")
+        self.assertIsInstance(scenario.environment, OneCampaignNDaysEnv)
+        self.assertEqual(len(scenario.auction_item_spec_ids), 1)
+        with self.assertRaisesRegex(ValueError, "Unknown scenario variant"):
+            self.scenario_factory.build("unknown")
 
     def test_market_env_folds_joint_and_single_state_views_for_modern_policies(self):
         """State folding should support both joint-state and per-agent policy views."""
-        env, _ = self.experiment.build_two_segment_setup()
+        env = self.scenario_factory.build("two_segment").environment
         joint_agent = Agent("joint", JointStatePolicy())
         single_agent = Agent("single", FixedBidPolicy(bid_per_item=1.0, total_limit=1.0))
         env.init([joint_agent, single_agent], horizon=1)
@@ -121,7 +131,7 @@ class TestEnvironmentAgentContract(unittest.TestCase):
 
     def test_market_env_folds_actions_and_rewards_per_agent_for_modern_path(self):
         """Action and reward folding should isolate the current agent's trajectory slice."""
-        env, _ = self.experiment.build_two_segment_setup()
+        env = self.scenario_factory.build("two_segment").environment
         agent0 = Agent("a0", FixedBidPolicy(bid_per_item=1.0, total_limit=1.0))
         agent1 = Agent("a1", FixedBidPolicy(bid_per_item=2.0, total_limit=2.0))
         env.init([agent0, agent1], horizon=1)
@@ -204,7 +214,9 @@ class TestEnvironmentAgentContract(unittest.TestCase):
 
     def test_convert_from_actions_tensor_accepts_float_spec_ids(self):
         """Action conversion should accept float-valued spec IDs from numeric policies."""
-        env, auction_item_spec_ids = self.experiment.build_one_segment_setup()
+        scenario = self.scenario_factory.build("one_segment")
+        env = scenario.environment
+        auction_item_spec_ids = scenario.auction_item_spec_ids
         agent = Agent("baseline", FixedBidPolicy(bid_per_item=1.0, total_limit=1.0))
         env.init([agent], horizon=1)
 
@@ -219,7 +231,7 @@ class TestEnvironmentAgentContract(unittest.TestCase):
 
     def test_convert_from_actions_tensor_raises_for_unknown_ids(self):
         """Unknown action spec IDs should fail fast instead of silently remapping."""
-        env, _ = self.experiment.build_two_segment_setup()
+        env = self.scenario_factory.build("two_segment").environment
         agent = Agent("baseline", FixedBidPolicy(bid_per_item=1.0, total_limit=1.0))
         env.init([agent], horizon=1)
 
@@ -235,7 +247,7 @@ class TestEnvironmentAgentContract(unittest.TestCase):
 
     def test_generate_trajectories_returns_aligned_batched_shapes(self):
         """Trajectory generation should align state, action, and reward batch shapes."""
-        env, _ = self.experiment.build_one_segment_setup()
+        env = self.scenario_factory.build("one_segment").environment
         agents = [
             Agent("a0", FixedBidPolicy(bid_per_item=5.0, total_limit=5.0)),
             Agent("a1", FixedBidPolicy(bid_per_item=5.0, total_limit=5.0)),
@@ -287,7 +299,7 @@ class TestEnvironmentAgentContract(unittest.TestCase):
             "num_days": 1,
             "num_trajs": 2,
             "num_epochs": 1,
-            "setup": "one_segment",
+            "scenario_variant": "one_segment",
             "seed": 123,
             "agents": [
                 {
@@ -316,12 +328,12 @@ class TestEnvironmentAgentContract(unittest.TestCase):
 
         # Patch the runner module's Agent/train references so we can observe how
         # policies are wired without running a full training pass.
-        with patch.object(one_camp_runner, "Agent", RecordingAgent), patch.object(
-            one_camp_runner,
+        with patch.object(one_campaign_runner, "Agent", RecordingAgent), patch.object(
+            one_campaign_runner,
             "train",
             fake_train,
         ):
-            one_camp_runner.run_experiment_from_config(config)
+            one_campaign_runner.run_from_config(config)
 
         self.assertEqual(len(created_agents), 2)
         learner_meta = next(meta for meta in created_agents if meta["name"] == "learner")

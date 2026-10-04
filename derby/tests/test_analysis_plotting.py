@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 matplotlib.use("Agg")
 
-from derby.experiments.one_camp_n_days import runner as one_camp_runner
+from derby.scenarios.one_campaign_n_days import runner as one_campaign_runner
 from pipeline.make_config_grid import generate_configs
 from utils.analysis import aggregate_seed_curves, expand_policy_params, last_epoch_table
 from utils.paper_plot import VarianceConfig, plot_learning_curves
@@ -151,7 +151,7 @@ def test_make_config_grid_renders_agent_label_templates(tmp_path) -> None:
                 "num_days": 1,
                 "num_trajs": 2,
                 "num_epochs": 1,
-                "setup": "one_segment",
+                "scenario_variant": "one_segment",
                 "agents": [
                     {
                         "name": "learner",
@@ -204,7 +204,7 @@ def test_make_config_grid_renders_agent_label_templates(tmp_path) -> None:
     ]
 
 
-def test_runner_writes_agent_label_without_experiment_label(tmp_path) -> None:
+def test_runner_writes_agent_label(tmp_path) -> None:
     def fake_train(env, num_of_trajs, horizon_cutoff, **kwargs):
         for idx, agent in enumerate(env.agents):
             agent.cumulative_rewards = [float(idx + 1)] * num_of_trajs
@@ -213,7 +213,7 @@ def test_runner_writes_agent_label_without_experiment_label(tmp_path) -> None:
         "num_days": 1,
         "num_trajs": 2,
         "num_epochs": 1,
-        "setup": "one_segment",
+        "scenario_variant": "one_segment",
         "agents": [
             {
                 "name": "bidder_a",
@@ -230,8 +230,8 @@ def test_runner_writes_agent_label_without_experiment_label(tmp_path) -> None:
         ],
     }
 
-    with patch.object(one_camp_runner, "train", fake_train):
-        one_camp_runner.run_experiment_from_config(config, output_dir_override=str(tmp_path))
+    with patch.object(one_campaign_runner, "train", fake_train):
+        one_campaign_runner.run_from_config(config, output_dir_override=str(tmp_path))
 
     parquet_files = list(tmp_path.glob("epoch_agg__*.parquet"))
     assert len(parquet_files) == 1
@@ -253,7 +253,7 @@ def test_runner_writes_learning_rate_diagnostics(tmp_path) -> None:
         "num_days": 1,
         "num_trajs": 2,
         "num_epochs": 1,
-        "setup": "one_segment",
+        "scenario_variant": "one_segment",
         "agents": [
             {
                 "name": "bidder_a",
@@ -268,8 +268,8 @@ def test_runner_writes_learning_rate_diagnostics(tmp_path) -> None:
         ],
     }
 
-    with patch.object(one_camp_runner, "train", fake_train):
-        one_camp_runner.run_experiment_from_config(config, output_dir_override=str(tmp_path))
+    with patch.object(one_campaign_runner, "train", fake_train):
+        one_campaign_runner.run_from_config(config, output_dir_override=str(tmp_path))
 
     parquet_files = list(tmp_path.glob("epoch_agg__*.parquet"))
     assert len(parquet_files) == 1

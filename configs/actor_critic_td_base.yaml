@@ -1,10 +1,10 @@
-## Base experiment config for the modern one-step TD ActorCritic policy.
-# Use this as the canonical ActorCritic entrypoint for one_camp_n_days runs.
+## Base run config for one-step TD ActorCritic.
+# Use this as the canonical ActorCritic entrypoint for one-campaign-N-days runs.
 
 num_days: 2
 num_trajs: 50
 num_epochs: 500
-setup: one_segment
+scenario_variant: one_segment
 seed: 123
 agents:
   - name: learner

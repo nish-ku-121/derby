@@ -4,7 +4,9 @@ from .runner import main
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run Derby one_camp_n_days experiment from YAML config.")
+    parser = argparse.ArgumentParser(
+        description="Run the Derby one-campaign-N-days scenario from a YAML config."
+    )
     parser.add_argument('--config', required=True, type=str, help='Path to YAML config file')
     parser.add_argument('-o', '--output-dir', dest='output_dir', type=str, default=None,
                         help='Optional directory to write epoch-level parquet logs')

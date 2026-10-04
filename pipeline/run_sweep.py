@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Run a directory of generated experiment configs against an experiment module.
+"""Run a directory of generated run configs against an executable module.
 
 Usage examples:
   # Sequential
-  python -m pipeline.run_experiment_sweep --configs-dir sweeps/reinforce_unified_demo/configs \
-      --experiment-module derby.experiments.one_camp_n_days \
+  python -m pipeline.run_sweep --configs-dir sweeps/reinforce_unified_demo/configs \
+      --run-module derby.scenarios.one_campaign_n_days \
       --output-dir results/reinforce_unified_demo
 
   # Parallel (4 workers)
-  python -m pipeline.run_experiment_sweep --configs-dir sweeps/reinforce_unified_demo/configs \
-      --experiment-module derby.experiments.one_camp_n_days \
+  python -m pipeline.run_sweep --configs-dir sweeps/reinforce_unified_demo/configs \
+      --run-module derby.scenarios.one_campaign_n_days \
       --output-dir results/reinforce_unified_demo --parallel 4
 
   # Dry run (print commands only)
-  python -m pipeline.run_experiment_sweep --configs-dir sweeps/reinforce_unified_demo/configs \
-      --experiment-module derby.experiments.one_camp_n_days \
+  python -m pipeline.run_sweep --configs-dir sweeps/reinforce_unified_demo/configs \
+      --run-module derby.scenarios.one_campaign_n_days \
       --output-dir results/reinforce_unified_demo --dry-run
 
 Skips a run if a completion JSON already exists.
@@ -39,7 +39,7 @@ MANIFEST_NAME = "run_summary.json"
 MAX_STDERR_TAIL = 5000  # max chars of stderr tail we retain for failures
 
 Result = Dict[str, Any]
-PREFIX = "[run_experiment_sweep]"
+PREFIX = "[run_sweep]"
 
 
 def _append_output_tail(tail: deque[str], size: int, text: str) -> int:
@@ -62,12 +62,12 @@ def _discover_configs(cfg_dir: Path) -> List[Path]:
     return sorted([p for p in cfg_dir.glob('*.yaml') if p.is_file()])
 
 
-def _build_command(cfg_path: Path, output_dir: Path, experiment_module: str) -> List[str]:
-    """Build the subprocess command to execute a single experiment config."""
+def _build_command(cfg_path: Path, output_dir: Path, run_module: str) -> List[str]:
+    """Build the subprocess command to execute a single run config."""
     return [
         sys.executable,
         '-m',
-        experiment_module,
+        run_module,
         '--config',
         str(cfg_path),
         '--output-dir',
@@ -83,7 +83,7 @@ def _write_completion_record(
     completion_record: Path,
     cfg_path: Path,
     run_dir: Path,
-    experiment_module: str,
+    run_module: str,
     start_ts: float,
     end_ts: float,
 ) -> None:
@@ -91,7 +91,7 @@ def _write_completion_record(
         "status": "ok",
         "config": str(cfg_path),
         "output_dir": str(run_dir.resolve()),
-        "experiment_module": experiment_module,
+        "run_module": run_module,
         "start_time": _utc_iso(start_ts),
         "end_time": _utc_iso(end_ts),
         "duration_s": round(end_ts - start_ts, 4),
@@ -120,7 +120,7 @@ def _dirty_run_dirs(configs: List[Path], output_dir: Path) -> List[Path]:
 def _run_one(
     cfg_path: Path,
     output_dir: Path,
-    experiment_module: str,
+    run_module: str,
     dry_run: bool,
     index: int,
     total: int,
@@ -139,9 +139,9 @@ def _run_one(
             "config": str(cfg_path),
             "status": "skipped",
             "output_dir": str(run_dir.resolve()),
-            "experiment_module": experiment_module,
+            "run_module": run_module,
         }
-    cmd = _build_command(cfg_path, run_dir, experiment_module)
+    cmd = _build_command(cfg_path, run_dir, run_module)
     print(f"{PREFIX} START {index}/{total} {cfg_path.name} -> {run_dir}", flush=True)
     if dry_run:
         print(f"{PREFIX} DONE  {index}/{total} {cfg_path.name} dry-run -> {' '.join(cmd)}", flush=True)
@@ -151,7 +151,7 @@ def _run_one(
             "cmd": ' '.join(cmd),
             "duration_s": 0.0,
             "output_dir": str(run_dir.resolve()),
-            "experiment_module": experiment_module,
+            "run_module": run_module,
         }
     try:
         t0 = time.time()
@@ -193,14 +193,14 @@ def _run_one(
         end_ts = time.time()
         dt = end_ts - t0
         if proc.returncode == 0:
-            _write_completion_record(completion_record, cfg_path, run_dir, experiment_module, t0, end_ts)
+            _write_completion_record(completion_record, cfg_path, run_dir, run_module, t0, end_ts)
             print(f"{PREFIX} DONE  {index}/{total} {cfg_path.name} ok duration={dt:.1f}s", flush=True)
             return {
                 "config": str(cfg_path),
                 "status": "ok",
                 "duration_s": round(dt, 4),
                 "output_dir": str(run_dir.resolve()),
-                "experiment_module": experiment_module,
+                "run_module": run_module,
             }
         else:
             print(
@@ -215,7 +215,7 @@ def _run_one(
                 "stderr": stderr[-MAX_STDERR_TAIL:],
                 "duration_s": round(dt, 4),
                 "output_dir": str(run_dir.resolve()),
-                "experiment_module": experiment_module,
+                "run_module": run_module,
             }
     except Exception as e:  # pragma: no cover
         print(f"{PREFIX} DONE  {index}/{total} {cfg_path.name} error error={e}", flush=True)
@@ -225,7 +225,7 @@ def _run_one(
             "error": str(e),
             "duration_s": 0.0,
             "output_dir": str(run_dir.resolve()),
-            "experiment_module": experiment_module,
+            "run_module": run_module,
         }
 
 
@@ -256,9 +256,9 @@ def _print_parallel_status(
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Run a generated experiment-config sweep")
+    ap = argparse.ArgumentParser(description="Run a generated configuration sweep")
     ap.add_argument('--configs-dir', required=True, help='Directory containing run_*.yaml configs')
-    ap.add_argument('--experiment-module', required=True, help='Python module to invoke via `python -m` for each config')
+    ap.add_argument('--run-module', required=True, help='Python module to invoke via `python -m` for each config')
     ap.add_argument('--output-dir', required=True, help='Directory root for per-run outputs')
     ap.add_argument('--parallel', type=int, default=1, help='Number of parallel workers (default 1)')
     ap.add_argument('--dry-run', action='store_true', help='Print commands without executing')
@@ -311,7 +311,7 @@ def main():
             r = _run_one(
                 p,
                 output_dir,
-                args.experiment_module,
+                args.run_module,
                 args.dry_run,
                 idx,
                 total_configs,
@@ -327,7 +327,7 @@ def main():
                     _run_one,
                     p,
                     output_dir,
-                    args.experiment_module,
+                    args.run_module,
                     args.dry_run,
                     idx,
                     total_configs,
@@ -367,7 +367,7 @@ def main():
         "summary": ordered_summary,
         "root_output_dir": str(output_dir.resolve()),
         "configs_dir": str(cfg_dir.resolve()),
-        "experiment_module": args.experiment_module,
+        "run_module": args.run_module,
         "status_interval_s": args.status_interval,
         "start_time": overall_start_iso,
         "end_time": overall_end_iso,

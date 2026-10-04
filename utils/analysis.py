@@ -97,7 +97,7 @@ def filter_epoch_rewards(
     agent_name: str | None = None,
     agent_label_prefix: str | None = None,
     policy_class: str | None = None,
-    setup: str | None = None,
+    scenario_variant: str | None = None,
 ) -> pd.DataFrame:
     """Apply common exact-match filters to an epoch reward DataFrame."""
     out = df
@@ -105,8 +105,8 @@ def filter_epoch_rewards(
         out = out[out["agent_name"] == agent_name]
     if policy_class is not None and "policy_class" in out.columns:
         out = out[out["policy_class"] == policy_class]
-    if setup is not None and "setup" in out.columns:
-        out = out[out["setup"] == setup]
+    if scenario_variant is not None and "scenario_variant" in out.columns:
+        out = out[out["scenario_variant"] == scenario_variant]
     if agent_label_prefix is not None and "agent_label" in out.columns:
         out = out[out["agent_label"].astype(str).str.startswith(agent_label_prefix, na=False)]
     return out.copy()
@@ -201,7 +201,7 @@ def inspect_epoch_rewards(root: str | os.PathLike) -> dict[str, object]:
     if df.empty:
         return summary
 
-    for col in ("agent_name", "agent_label", "policy_class", "run_id", "setup"):
+    for col in ("agent_name", "agent_label", "policy_class", "run_id", "scenario_variant"):
         if col in df.columns:
             vals = sorted(str(v) for v in df[col].dropna().unique())
             summary[col] = vals
@@ -221,7 +221,7 @@ def _print_inspection(root: str | os.PathLike, *, head: int) -> None:
     print(f"rows: {summary['rows']}")
     print(f"columns: {', '.join(summary['columns'])}")
 
-    for col in ("setup", "agent_name", "agent_label", "policy_class", "run_id"):
+    for col in ("scenario_variant", "agent_name", "agent_label", "policy_class", "run_id"):
         vals = summary.get(col)
         if vals:
             print(f"{col}s: {len(vals)}")

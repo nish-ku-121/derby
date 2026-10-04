@@ -1,359 +1,223 @@
+# Derby
 
-## Project Overview
+Derby is a research framework for reinforcement learning in repeated auction
+markets. It provides auction and market primitives, multi-agent environments,
+continuous-action policies, reproducible YAML run configurations, and
+tools for running and analyzing parameter sweeps.
 
-Derby is a bidding, auction, and *market* framework for creating and running auction or market games. Environments in Derby can be interfaced in a similar fashion as environments in OpenAI’s gym.
+This repository also contains the reproducibility package for
+[*Zero Collapse: A Failure Mode of Policy Gradient Methods in Discontinuous
+Reward Environments*](https://arxiv.org/abs/2605.30896). The paper studies how
+policy-gradient agents can collapse to near-zero actions in thresholded reward
+landscapes and evaluates interventions using Derby's auction environment.
 
-Example usage:
-```python
-env = ...
-agents = ...
-env.init(agents, num_of_days)
-for i in range(num_of_trajs):
-        all_agents_states = env.reset()
-        for j in range(horizon_cutoff):
-            actions = []
-            for agent in env.agents:
-                agent_states = env.get_folded_states(
-                                    agent, all_agents_states
-                                )
-                actions.append(agent.compute_action(agent_states))
-            all_agents_states, rewards, done = env.step(actions)
+## How the environment works
+
+In Derby, a market is modeled as a stateful sequence of auctions:
+
+1. One or more bidders enter the market with a campaign, budget, and policy.
+2. Each simulated day presents auction items associated with audience segments.
+3. Agents submit continuous-valued bids, the auction allocates items, and the
+   market computes rewards.
+4. Campaign state carries across days, allowing policies to learn from repeated
+   interaction rather than isolated auctions.
+
+The `one_campaign_n_days` scenario family supports one- and two-segment
+variants. Learning agents can use REINFORCE or a one-step TD actor-critic; fixed
+bid, budget-per-reach, and step policies are available as deterministic
+baselines.
+
+Here, a **scenario family** defines the overall task, while a
+`scenario_variant` selects a concrete environment specification within that
+family, such as `one_segment` or `two_segment`. A run instantiates that variant
+with the configured agents, seed, horizon, and training parameters.
+
+## Quick start
+
+The supported development and execution workflow uses Docker to provide Python
+3.10, TensorFlow, Poetry, and the remaining dependencies. Install
+[Docker](https://www.docker.com/products/docker-desktop/) and GNU Make, then run
+from the repository root:
+
+```bash
+make build
+make run ARGS="python -u -m derby.scenarios.one_campaign_n_days \
+  --config configs/one_campaign_n_days_base.yaml \
+  --output-dir results/quickstart"
 ```
 
----
+The first command builds the `derby-app` image. Rebuild it after changing
+`Dockerfile`, `pyproject.toml`, or `poetry.lock`; source and configuration files
+are mounted into the container for subsequent commands.
 
-## Documentation quick links
+The command above invokes the scenario package's command-line entry point. It
+delegates to `derby.scenarios.one_campaign_n_days.runner`, which loads the YAML
+configuration, constructs the environment and agents, performs training, and
+records aggregate metrics. A successful run writes one row per epoch and agent
+to `results/quickstart/epoch_agg__<run-id>.parquet`. Inspect the output with:
 
-- Policies overview: see docs/Policies.md for the supported modern policy surface.
+```bash
+make run ARGS="python -m utils.analysis results/quickstart"
+```
 
----
+`results/` and `sweeps/` are intentionally ignored by Git.
 
-## Zero-collapse paper artifacts
+## Configure a run
 
-The tracked bundle in [`paper/zero_collapse/`](paper/zero_collapse/) accompanies
-*Zero Collapse: A Failure Mode of Policy Gradient Methods in Discontinuous
-Reward Environments*. Read the paper for the research narrative and
-interpretation; this repository provides the runnable implementation and the
-versioned artifacts behind its empirical figures and table.
+Start with one of the checked-in configs:
 
-Start with [`paper/zero_collapse/SOURCES.md`](paper/zero_collapse/SOURCES.md)
-for the figure-to-config mapping. The bundle contains paper-numbered empirical
-figures, normalized supporting data, the manuscript-consumed table, and the
-scripts that render them. Figure 1 is a conceptual schematic in the manuscript,
-so it has no Derby-generated counterpart.
+- [`configs/one_campaign_n_days_base.yaml`](configs/one_campaign_n_days_base.yaml) —
+  REINFORCE against a fixed-bid baseline
+- [`configs/actor_critic_td_base.yaml`](configs/actor_critic_td_base.yaml) —
+  one-step TD actor-critic against a fixed-bid baseline
 
-To regenerate the ordinary figures and table from the committed normalized data:
+A run configuration defines:
+
+```yaml
+num_days: 1       # episode horizon
+num_trajs: 100    # trajectories sampled per epoch
+num_epochs: 10
+scenario_variant: one_segment  # one_segment or two_segment
+seed: 123           # omit for a stochastic run
+agents:
+  - name: learner
+    label: REINFORCE
+    policy: REINFORCE
+    params:
+      learning_rate: 1e-6
+      dist_type: gaussian
+      use_baseline: false
+  - name: baseline
+    label: FixedBid
+    policy: FixedBidPolicy
+    params:
+      bid_per_item: 5
+      total_limit: 5
+```
+
+Supported distributions for learning policies are `gaussian`, `lognormal`, and
+`triangular`. Architecture, optimizer, action initialization, reward shaping,
+and adaptive step-size settings are explicit policy parameters; the checked-in
+configs provide complete examples. A config-level `seed` seeds Python, NumPy,
+TensorFlow, the environment, and policies that expose a seed parameter. There
+is no command-line seed override.
+
+The command-line runner also accepts these options:
+
+```text
+-o, --output-dir PATH   write epoch aggregates to PATH
+--log-level LEVEL       DEBUG, INFO, WARNING, ERROR, CRITICAL, or NONE
+--flush-every N         flush Parquet output every N epochs (default: 1)
+```
+
+For notebooks or other Python workflows, invoke the same execution path through
+its Python API:
+
+```python
+import yaml
+from derby.scenarios.one_campaign_n_days.runner import run_from_config
+
+with open("configs/one_campaign_n_days_base.yaml", encoding="utf-8") as file:
+    config = yaml.safe_load(file)
+
+run_id = run_from_config(
+    config,
+    output_dir_override="results/notebook_run",
+)
+```
+
+## Run a parameter sweep
+
+Sweep specifications combine a base run configuration with fixed overrides and
+a grid of dotted config keys. The example
+[`configs/reinforce_unified_sweep.yaml`](configs/reinforce_unified_sweep.yaml)
+shows the complete schema.
+
+Generate the concrete configs:
+
+```bash
+make run ARGS="python -u -m pipeline.make_config_grid \
+  --spec configs/reinforce_unified_sweep.yaml \
+  --output-dir sweeps/reinforce_demo/configs"
+```
+
+Preview or execute them:
+
+```bash
+# Print the commands without running them.
+make run ARGS="python -u -m pipeline.run_sweep \
+  --configs-dir sweeps/reinforce_demo/configs \
+  --run-module derby.scenarios.one_campaign_n_days \
+  --output-dir results/reinforce_demo \
+  --dry-run"
+
+# Run up to four configurations concurrently.
+make run ARGS="python -u -m pipeline.run_sweep \
+  --configs-dir sweeps/reinforce_demo/configs \
+  --run-module derby.scenarios.one_campaign_n_days \
+  --output-dir results/reinforce_demo \
+  --parallel 4"
+```
+
+Each config receives its own result directory. Successful runs contain
+`_RUN_COMPLETE.json`; rerunning the sweep skips those directories. The sweep
+command also writes `run_summary.json` at the output root and `failure.json`
+inside a failed run directory. It stops before execution if it finds a
+non-empty run directory without a completion record, protecting partial output
+from being silently overwritten.
+
+## Reproduce the paper artifacts
+
+The versioned publication bundle lives in
+[`paper/zero_collapse/`](paper/zero_collapse/). It contains normalized data,
+paper-numbered figures, the manuscript table, and the scripts used to render
+them. To rebuild the empirical figures and table from the committed data:
 
 ```bash
 make run ARGS="python paper/zero_collapse/scripts/build_outputs.py"
 ```
 
-The data-extraction and critic-diagnostic scripts are maintainer workflows: they
-require the intentionally untracked raw `results/` tree. Experiment and sweep
-specifications remain under [`configs/`](configs/), including the exact
-matched-optimizer configurations used for the paper.
+[`paper/zero_collapse/SOURCES.md`](paper/zero_collapse/SOURCES.md) maps every
+artifact to its run configuration and documents the reproduction
+boundary. In particular, the ordinary build above does not require the raw
+training output. Data extraction and the TD-value critic rerun are maintainer
+workflows that depend on the untracked `results/` tree.
 
----
+## Repository guide
 
-## Game Description
+| Path | Purpose |
+| --- | --- |
+| `derby/core/` | Auctions, markets, environments, agents, states, and probability utilities |
+| `derby/policies/` | Continuous actors, REINFORCE, TD actor-critic, and deterministic baselines |
+| `derby/scenarios/` | Scenario definitions and scenario-specific training entry points |
+| `configs/` | Single-run configurations and sweep specifications |
+| `pipeline/` | Config-grid generation and resumable sweep execution |
+| `utils/` | Parquet loading, filtering, aggregation, and plotting helpers |
+| `paper/zero_collapse/` | Tracked data and generated artifacts for the paper |
+| `derby/tests/` | Unit and integration tests |
 
-A *market* can be thought of as a stateful, repeated auction:
+## Development
 
--   A market is initialized with *m* bidders, each of which has a state.
--   A market lasts for *N* days.
--   Each day, auction items are put on sale. Each day, the bidders participate in an auction for the available items.
--   Each bidder’s state is updated at the end of every day. The state can track information such as auction items bought and amount spent.
+Run the complete test suite in the container:
 
----
-
-## First Time Install
-
-This project is designed to run using Docker. You only need Docker installed—no other dependencies are required on your host machine.
-
-1. **Install Docker**  
-    Download and install Docker from:  
-    https://www.docker.com/products/docker-desktop
-
-2. **Build the Docker image**  
-    In the project root directory, run:
-    ```bash
-    make build
-    ```
-    Re-run `make build` after changing `Dockerfile`, `pyproject.toml`, or `poetry.lock`.
-    Normal source edits are mounted into the container, so `make run` and `make test` use the existing image.
-
-## Running Experiments
-
-The Makefile's `run` target automatically executes commands via Poetry inside the container, so you can pass plain `python` commands in `ARGS`.
-
-### Modern YAML-driven runner (v2)
-
-For new work, prefer the YAML-based `derby.experiments.one_camp_n_days` package entrypoint. It consumes a single config dict from a YAML file and logs per-epoch metrics to Parquet.
-
-CLI usage:
 ```bash
-make run ARGS="python -u -m derby.experiments.one_camp_n_days \
-    --config configs/one_camp_n_days_base.yaml \
-    --output-dir results/test_run \
-    --log-level INFO"
+make test
 ```
 
-Key points:
-- Seed (if you want reproducibility) must be specified ONLY inside the YAML as `seed:`. There is no CLI override.
-- Output directory (`-o/--output-dir`) is optional; if provided, a Parquet file `epoch_agg__<run_id>.parquet` is written there containing one row per (epoch, agent).
-- Each row includes: `run_id`, `config_hash`, `global_seed`, `agent_label`, per-agent mean/std reward, and core config fields.
-- `config_hash` is a SHA256 of the config with non-semantic keys (`label`, `logging`) removed recursively; changing the seed changes the hash.
-- Baseline (non-TensorFlow) policies receive raw states/actions; only TensorFlow policies are scaled/normalized.
+Run a single file or test by overriding `TEST`:
 
-Minimal base config example (`configs/one_camp_n_days_base.yaml`) using the unified `REINFORCE` policy (old preset names removed):
-```yaml
-num_days: 1            # days per trajectory
-num_trajs: 200         # trajectories per epoch
-num_epochs: 100        # training epochs
-setup: one_segment
-seed: 123              # optional; remove for stochastic run
-agents:
-  - name: learner
-    label: REINFORCE
-    policy: REINFORCE            # unified class (no more REINFORCE_PRESET_v*)
-    params:
-      learning_rate: 5e-7
-      # Common knobs (override as needed) ----------------------------------
-      actor_hidden_layers: 1     # 0 => no hidden layers before param head
-      actor_hidden_units: 8
-      critic_hidden_layers: 1
-      critic_hidden_units: 8
-      actor_final_activation: softplus   # softplus | relu | other TF activations
-      # Optional explicit action-space initialization targets in natural units
-      # init_action_center: 5.0
-      # init_action_stddev: 0.5
-      min_action_stddev: 1e-5           # minimum stddev in natural action units
-      # Optional advanced knob for the parameter-head kernel initializer
-      # Omit to use the framework default.
-      # param_kernel_initializer: glorot_uniform
-      dist_type: gaussian                # gaussian | lognormal | triangular
-      shape_reward: false                # if true: advantage shaping via log(1+r)
-  - name: baseline
-    label: FixedBid|Bid={agents.1.params.bid_per_item}|Limit={agents.1.params.total_limit}
-    policy: FixedBidPolicy
-    params:
-      bid_per_item: 5
-      total_limit: 5
-```
-
-Python / notebook usage (public API):
-```python
-import yaml
-from derby.experiments.one_camp_n_days.runner import run_experiment_from_config
-
-with open("configs/one_camp_n_days_base.yaml", "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-
-run_id = run_experiment_from_config(
-    cfg,
-    output_dir_override="results/notebook_demo",  # writes Parquet here if provided
-    log_level="DEBUG",  # or "INFO" / "NONE" etc.
-)
-print("Run ID:", run_id)
-# Parquet path: results/notebook_demo/epoch_agg__<run_id>.parquet
-```
-
-Tip: If you want many variants, use the parallel sweeper below instead of hand-editing multiple YAMLs.
-
----
-
-## Unified REINFORCE Policy
-
-The legacy preset classes (`REINFORCE_PRESET_v1` .. `v4`) have been removed. All variants are now expressed by explicitly setting constructor parameters (or YAML `params`). Key knobs:
-
-| Parameter | Purpose |
-|-----------|---------|
-| `learning_rate` | Optimizer learning rate |
-| `optimizer` | `sgd` (default) or `adam` |
-| `dist_type` | `gaussian` (default), `lognormal`, or `triangular` |
-| `actor_hidden_layers` / `actor_hidden_units` | Depth/width of actor MLP before param head |
-| `critic_hidden_layers` / `critic_hidden_units` | Depth/width of value network |
-| `actor_final_activation` | Activation applied to raw mean/sigma streams (`softplus`, `relu`, etc.) |
-| `init_action_center` | Optional explicit initialization target for the primary action dimension, in natural action units |
-| `init_action_stddev` | Optional explicit initial spread target for the primary action dimension, in natural action units |
-| `min_action_stddev` | Minimum standard deviation in natural action units; the runner scales it before policy construction |
-| `param_kernel_initializer` | Optional Keras initializer spec for the parameter-head kernel; omit for framework default |
-| `shape_reward` | If true, applies `log(1+r)` shaping to positive rewards for variance reduction |
-| `seed` | Optional deterministic seed (Python, NumPy, TF generator) |
-
-To replicate an old preset, identify its architecture (depth/width), activation, and sigma parameters and specify them directly.
-
----
-
-## Modern ActorCritic Policy
-
-`ActorCritic` is the supported secondary modern learner. It shares the continuous stochastic actor machinery with `REINFORCE`, but uses a one-step TD state-value critic:
-
-- `critic_type: td` is the only first-class modern ActorCritic method.
-- Q-learning and SARSA actor-critic variants are not part of the supported modern workflow.
-- ActorCritic always uses a state-value baseline; do not pass `use_baseline`.
-
-Minimal config:
-```yaml
-num_days: 1
-num_trajs: 100
-num_epochs: 5
-setup: one_segment
-seed: 123
-agents:
-  - name: learner
-    label: ActorCritic|TD
-    policy: ActorCritic
-    params:
-      critic_type: td
-      critic_weight: 0.5
-      learning_rate: 1e-10
-      dist_type: gaussian
-      actor_hidden_layers: 4
-      actor_hidden_units: 4
-      critic_hidden_layers: 4
-      critic_hidden_units: 4
-  - name: baseline
-    label: FixedBid|Bid={agents.1.params.bid_per_item}|Limit={agents.1.params.total_limit}
-    policy: FixedBidPolicy
-    params:
-      bid_per_item: 5
-      total_limit: 5
-```
-
-The checked-in version is `configs/actor_critic_td_base.yaml`.
-
----
-
-## Parameter Sweeps (modern two-step workflow)
-
-Use the config-grid + sweep-runner pipeline:
-
-1. Author two YAML files:
-     - A base experiment config: one valid experiment run config.
-     - A sweep spec: a higher-level recipe that points to a `base_config` and defines `grid`, `override`, and optional `restrict` fields.
-
-Example sweep spec (`configs/reinforce_unified_sweep.yaml`):
-```yaml
-sweep_name: reinforce_unified_demo
-base_config: configs/one_camp_n_days_base.yaml
-override:
-    num_trajs: 50
-    num_epochs: 100
-    agents.0.label: "REINFORCE|Baseline={agents.0.params.use_baseline}|D={agents.0.params.dist_type}|A={agents.0.params.actor_hidden_layers}x{agents.0.params.actor_hidden_units}|C={agents.0.params.critic_hidden_layers}x{agents.0.params.critic_hidden_units}|Act={agents.0.params.actor_hidden_activation}>{agents.0.params.actor_final_activation}"
-grid:
-    agents.0.params.learning_rate: [5e-7, 1e-6]
-    agents.0.params.dist_type: [gaussian, lognormal]
-    agents.0.params.actor_hidden_units: [8, 16]
-restrict:
-    # max_combinations: 32
-```
-
-2. Generate concrete configs:
 ```bash
-make run ARGS="python -u -m pipeline.make_config_grid --spec configs/reinforce_unified_sweep.yaml --output-dir sweeps/reinforce_unified_demo/configs"
-```
-This produces `sweeps/reinforce_unified_demo/configs/*.yaml` (one per combination).
-
-3. Execute configs sequentially or in parallel:
-```bash
-# Parallel (4 workers)
-make run ARGS="python -u -m pipeline.run_experiment_sweep --configs-dir sweeps/reinforce_unified_demo/configs --experiment-module derby.experiments.one_camp_n_days --output-dir results/reinforce_unified_demo --parallel 4"
-
-# Dry-run (print commands only)
-make run ARGS="python -u -m pipeline.run_experiment_sweep --configs-dir sweeps/reinforce_unified_demo/configs --experiment-module derby.experiments.one_camp_n_days --output-dir results/reinforce_unified_demo --dry-run"
+make test TEST=derby/tests/test_actor_critic.py
 ```
 
-Behavior & features:
-- Each generated config gets its own subdirectory under the chosen `--output-dir` path; a completion record `_RUN_COMPLETE.json` marks a successfully completed run and causes later invocations to skip that config.
-- The sweep runner is resumable and non-destructive. It only advances missing or empty run directories toward completion; completed directories are skipped.
-- If a per-config run directory is non-empty but has no `_RUN_COMPLETE.json`, the sweep fails during preflight before starting any runs. Inspect/delete/move that directory or choose a new `--output-dir`.
-- The sweep runner prints `START`, `DONE`, and periodic `STATUS` lines while runs are active. Use `--status-interval <seconds>` to change the heartbeat cadence, or `--status-interval 0` to disable it.
-- Agent labels may be literal strings in the base config or templated strings in sweep `override` values such as `agents.0.label`.
-- Agent-label placeholders are resolved from full generated-config dotted paths after grid and override values are applied, such as `{agents.0.params.dist_type}` or `{agents.1.params.bid_per_item}`.
-- The sweep manifest is written to `run_summary.json` in the chosen output root. It records the per-run results plus the `configs_dir`, `experiment_module`, output root, wall-clock timing, and summary counts.
-- If every config is skipped because completion records already exist, `run_summary.json` is not written or modified because no output state changed.
-- Failed or errored runs also get a per-run `failure.json` in their run directory with the captured error details.
-- Failures return a JSON summary (use `--json` for machine-readable output).
+Start an interactive shell or JupyterLab session with `make shell` or
+`make jupyter`. JupyterLab is served at `http://localhost:8888` by default; set
+`JUPYTER_PORT` to change the host port.
 
-## Repository layout
+After changing dependencies in `pyproject.toml`, regenerate the lock file and
+rebuild the image:
 
-- `derby/` — core library (environments, agents, auctions, markets, policies, utils)
-- `pipeline/` — modern, process-based runners and tools
-    - `make_config_grid.py` — expand a sweep spec YAML into concrete experiment config files
-    - `run_experiment_sweep.py` — run a directory of generated configs against an experiment module
-- `utils/` — reusable helpers for analysis and plotting
-    - `epoch_agg_loader.py` — list/load per-epoch Parquet files; basic policy summaries
-    - `analysis.py` — load/filter/expand/inspect modern Parquet epoch aggregates
-    - `paper_plot.py` — focused paper-quality learning-curve plotting from epoch aggregates
-- `configs/` — experiment/sweep YAML configuration (e.g., `base_sweep.yaml`, `grid_sweep_1.yaml`)
-- `notebooks/` — Jupyter notebooks for exploration/visualization
-- `Dockerfile`, `Makefile`, `pyproject.toml`, `poetry.lock`
-
-Notes:
-- The repository does not track `results/` in git; it's reserved for run outputs (Parquet, JSONL, etc.).
-- `paper/zero_collapse/` contains the versioned empirical paper bundle; its `SOURCES.md` records artifact provenance and reproduction notes.
-- The paper bundle tracks reduced, inspectable artifacts rather than the full raw experiment-output tree.
-- Update any local scripts to import from `utils.*` or execute from `pipeline/*` instead of `results.*`.
-
-## Rebuilding the Poetry Lock File
-
-If you change dependencies in `pyproject.toml`, you may want to regenerate the `poetry.lock` file. Use the following make command:
 ```bash
 make lockfile
+make build
 ```
-This will update `poetry.lock` to match the dependencies in `pyproject.toml` using Docker for a fully reproducible environment.
-
----
-
-## Project Background
-
-Derby was created by [Nishant Kumar](https://github.com/nish-ku-121) for use in his grad school research project (in collaboration with Prof. Amy Greenwald and fellow student [Enrique Areyan](https://github.com/eareyan)).
-
-See [AdX RL Research Summary](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Summary.pdf) for a brief summary.
-
-The goal of the project was to apply (deep) reinforcement learning to the _AdX Game_. The AdX Game crudely models the digital advertising domain: advertisers buy _impression opportunities_ from websites, where the objective of each advertiser is to minimize spend and the objective of each website is to maximize revenue. This buying and selling is usually done through an _ad exchange_ (e.g. Google's AdX), which canonically holds digital auctions; the bidders are advertisers and the goods being sold are impression opportunities. In the AdX Game, each player plays the role of an _advertiser liaison_: advertisers procure _ad campaigns_ to liaisons, who are responsible for fulfilling the campaign within a certain time frame. The goal of each player is to learn what bids to place in order to maximize their profit by the end of the game.
-
-(See pages 2 to 3 of [AdX RL Research Summary](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Summary.pdf) for the game definition)
-
-
----
-
-## RL Challenges
-
-The AdX game is interesting to tackle from a reinforcement learning perspective because it poses several interesting properties and challenges:
-- Stochasticity in the game can be a consequence of both the randomness of an impression opportunity's demographic(s) and the randomness of each player's strategy (i.e. players playing mixed strategies).
-- Determining an optimal policy via _planning_ is difficult because determining a model _a priori_ is difficult or infeasible.
-- The domain offers continuous control, as bids are real-valued. Furthermore, the domain can be highly dimensional, as there can be many types of demographics. Consequently exhaustive search of the space is often infeasible or intractable, thus smart exploration and/or generalization is required.
-- The domain can be examined from both a single-agent perspective and a multi-agent perspective.
-
-(See pages 8 to 11 of [AdX RL Research Summary](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Summary.pdf) for an RL formulation)
-
-
----
-
-## Algorithms
-
-Algorithms derived, tested, and tuned include:
-- Multi-Agent REINFORCE (with and without baseline)
-- Multi-Agent Actor-Critic Q (with baseline)
-- Multi-Agent Actor-Critic TD (has baseline)
-- Multi-Agent Actor-Critic SARSA (with baseline)
-
-(See pages 8 to 26 of [AdX RL Research Full](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Full.pdf) for algorithms and their derivations)
-
-
-For all algorithms, the policy network learns a Gaussian distribution using a neural net architecture.
-
-For algorithms that learn Q or V, the value network has a standard setup: one or more dense layers taking state (and action for Q) as input and returning a Q or V value as output. Assume ReLU activation functions.
-
-Challenges, tips, and tricks can be found on pages 28 to 34 of [AdX RL Research Full](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Full.pdf).
-
----
-
-## Results
-
-Some results can be found:
-- Pages 5 to 6 of [AdX RL Research Summary](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Summary.pdf)
-- Page 35 of [AdX RL Research Full](https://github.com/nish-ku-121/derby/blob/9b693fe1aeebb2856b6408e202f7fafff28cd80f/AdX%20RL%20Research%20Full.pdf)
-- Pages 4 to 11 of [AdX Research Select Results](https://github.com/nish-ku-121/derby/blob/master/AdX%20RL%20Research%20Select%20Results.pdf)

@@ -1,6 +1,6 @@
 # Long-horizon isolated adaptive step-rate treatment on top of REINFORCE Control 2.
 sweep_name: reinforce_adaptive_step_rate_1000ep
-base_config: configs/one_camp_n_days_base.yaml
+base_config: configs/one_campaign_n_days_base.yaml
 override:
   agents.0.policy: REINFORCE
   agents.0.label: "{agents.0.policy}|AdaptiveStepRate1000ep|Seed={seed}|Baseline={agents.0.params.use_baseline}|Init={agents.0.params.param_kernel_initializer}|Eps={agents.0.params.adaptive_lr_epsilon}|Eta={agents.0.params.adaptive_lr_eta}|BaseLRPlaceholder={agents.0.params.learning_rate}|Hidden={agents.0.params.actor_hidden_activation}|Final={agents.0.params.actor_final_activation}"

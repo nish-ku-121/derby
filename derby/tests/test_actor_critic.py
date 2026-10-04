@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 
 from derby.core.agents import Agent
-from derby.experiments.one_camp_n_days import runner as one_camp_runner
+from derby.scenarios.one_campaign_n_days import runner as one_campaign_runner
 from derby.policies.actor_critic import ActorCritic
 
 
@@ -124,7 +124,7 @@ class TestActorCritic(unittest.TestCase):
             "num_days": 1,
             "num_trajs": 2,
             "num_epochs": 1,
-            "setup": "one_segment",
+            "scenario_variant": "one_segment",
             "seed": 123,
             "agents": [
                 {
@@ -143,12 +143,12 @@ class TestActorCritic(unittest.TestCase):
             ],
         }
 
-        with patch.object(one_camp_runner, "Agent", RecordingAgent), patch.object(
-            one_camp_runner,
+        with patch.object(one_campaign_runner, "Agent", RecordingAgent), patch.object(
+            one_campaign_runner,
             "train",
             fake_train,
         ):
-            one_camp_runner.run_experiment_from_config(config)
+            one_campaign_runner.run_from_config(config)
 
         self.assertEqual(len(created_agents), 1)
         self.assertEqual(created_agents[0]["policy_class"], "ActorCritic")

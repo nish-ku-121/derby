@@ -1,1 +1,1 @@
-"""Modern pipeline runners for Derby experiments (YAML- and parquet-based)."""
+"""Config generation and sweep execution for Derby training runs."""
