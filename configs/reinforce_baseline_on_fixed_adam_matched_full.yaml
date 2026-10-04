@@ -1,6 +1,6 @@
 # Frozen baseline-on fixed-Adam follow-up from the prospective matched calibration.
 sweep_name: reinforce_baseline_on_fixed_adam_matched_full
-base_config: configs/one_camp_n_days_base.yaml
+base_config: configs/one_campaign_n_days_base.yaml
 override:
   num_days: 5
   num_trajs: 50

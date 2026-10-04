@@ -22,8 +22,8 @@ import yaml
 
 from derby.core.agents import Agent
 from derby.core.environments import train
-from derby.experiments.one_camp_n_days.experiment import OneCampNDaysExperiment
-from derby.experiments.one_camp_n_days.runner import (
+from derby.scenarios.one_campaign_n_days.scenario import OneCampaignNDaysScenarioFactory
+from derby.scenarios.one_campaign_n_days.runner import (
     _derive_policy_seed,
     _prepare_runtime_policy_params,
     _seed_everything,
@@ -68,13 +68,15 @@ def load_selected_config() -> dict:
     raise RuntimeError("diagnostic cell (seed=456, learning_rate=1e-8) was not generated")
 
 
-def build_experiment(config: dict):
+def build_run_components(config: dict):
     """Construct the exact current Control 2 learner/baseline pair."""
     seed = int(config["seed"])
     _seed_everything(seed)
-    experiment = OneCampNDaysExperiment(seed=seed)
-    env, spec_ids = experiment.build_one_segment_setup()
-    scale_states, actions_scaler, scale_actions, descale_actions = experiment.build_env_transforms(env)
+    scenario_factory = OneCampaignNDaysScenarioFactory(seed=seed)
+    scenario = scenario_factory.build(config["scenario_variant"])
+    env = scenario.environment
+    spec_ids = scenario.auction_item_spec_ids
+    scale_states, actions_scaler, scale_actions, descale_actions = scenario_factory.build_env_transforms(env)
 
     learner_cfg = config["agents"][0]
     params = dict(learner_cfg["params"])
@@ -276,7 +278,7 @@ def main() -> None:
     assert config["agents"][0]["params"]["critic_type"] == "td"
     assert SELECTED_EPOCH < int(config["num_epochs"])
 
-    env, learner, scale_states = build_experiment(config)
+    env, learner, scale_states = build_run_components(config)
     historical = retained_rewards()
     rerun_rewards = []
     for epoch in range(SELECTED_EPOCH + 1):

@@ -63,7 +63,7 @@ def load_epoch_agg(root: str | os.PathLike, pattern: str = "epoch_agg__*.parquet
 def basic_summary_by_policy(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    grouped = df.groupby(["setup", "policy_class", "epoch"], as_index=False).agg(
+    grouped = df.groupby(["scenario_variant", "policy_class", "epoch"], as_index=False).agg(
         mean_of_means=("mean_reward", "mean"),
         runs=("run_id", "nunique"),
     )

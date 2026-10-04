@@ -4,7 +4,7 @@
 num_days: 5
 num_trajs: 50
 num_epochs: 500
-setup: one_segment
+scenario_variant: one_segment
 seed: 123
 agents:
   - name: learner

@@ -1,6 +1,6 @@
 # 1,000-epoch promotion of healthy higher-epsilon combined REINFORCE SGD cells.
 sweep_name: reinforce_combined_sgd_high_epsilon
-base_config: configs/one_camp_n_days_base.yaml
+base_config: configs/one_campaign_n_days_base.yaml
 override:
   agents.0.policy: REINFORCE
   agents.0.label: "{agents.0.policy}|CombinedSgdHighEpsilon|Seed={seed}|Baseline={agents.0.params.use_baseline}|Eps={agents.0.params.adaptive_lr_epsilon}|Eta={agents.0.params.adaptive_lr_eta}|Hidden={agents.0.params.actor_hidden_activation}|Final={agents.0.params.actor_final_activation}|Init={agents.0.params.param_kernel_initializer}"

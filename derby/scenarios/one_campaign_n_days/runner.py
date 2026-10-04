@@ -15,7 +15,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import tensorflow as tf
  
-from derby.experiments.one_camp_n_days.experiment import OneCampNDaysExperiment
+from derby.scenarios.one_campaign_n_days.scenario import (
+    SCENARIO_VARIANTS,
+    OneCampaignNDaysScenarioFactory,
+)
 from derby.core.agents import Agent
 from derby.core.environments import train
 from derby.policies.actor_critic import ActorCritic
@@ -25,9 +28,9 @@ from derby.policies.reinforce import REINFORCE
 # Module-level logger
 logger = logging.getLogger(__name__)
 
-# TODO(new-paradigm): This runner is intentionally scoped to the
-# one-campaign-N-days experiment family for now. If we add a second modern
-# experiment family, revisit whether the config/orchestration pieces here
+# This runner is intentionally scoped to the one-campaign-N-days scenario
+# family. If we add a second scenario family, revisit whether the
+# config/orchestration pieces here
 # should be extracted into a reusable generic runner layer.
 
 SUPPORTED_POLICIES = {
@@ -38,12 +41,6 @@ SUPPORTED_POLICIES = {
     "StepPolicy": StepPolicy,
 }
 
-SUPPORTED_SETUPS = {
-    "one_segment": "build_one_segment_setup",
-    "two_segment": "build_two_segment_setup",
-}
-
-
 def _resolve_policy_class(name: str):
     """
     Resolve a policy class from the modern supported surface only.
@@ -53,20 +50,9 @@ def _resolve_policy_class(name: str):
     except KeyError:
         supported = ", ".join(sorted(SUPPORTED_POLICIES))
         raise ValueError(
-            f"Unsupported policy for one_camp_n_days runner: {name}. "
+            f"Unsupported policy for one_campaign_n_days runner: {name}. "
             f"Supported policies: {supported}"
         ) from None
-
-
-def _resolve_setup_function(experiment: OneCampNDaysExperiment, setup_name: str):
-    """Resolve a user-facing setup name to the corresponding experiment factory."""
-    method_name = SUPPORTED_SETUPS.get(setup_name)
-    if method_name is None:
-        supported = ", ".join(sorted(SUPPORTED_SETUPS))
-        raise ValueError(
-            f"Unknown setup: {setup_name}. Supported setups: {supported}"
-        )
-    return setup_name, getattr(experiment, method_name)
 
 
 def _filter_kwargs_for_callable(callable_obj, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -188,20 +174,20 @@ def _render_agent_label(label: str, config: Dict[str, Any]) -> str:
     return "".join(parts)
 
 
-def run_experiment_from_config(
+def run_from_config(
     config: Dict[str, Any],
     output_dir_override: str | None = None,
     run_id: str | None = None,
     flush_every: int = 1,
 ) -> str:
-    """Run an experiment described by an in-memory config dict (public API).
+    """Execute a training run described by an in-memory config dict.
 
     Supported (simplified) YAML schema:
         num_days: int                    # days per trajectory (episode length / horizon)
         num_trajs: int                   # trajectories (episodes) per epoch
         num_epochs: int                  # number of training epochs
-        setup: one_segment | two_segment
-                                         # user-facing scenario name
+        scenario_variant: one_segment | two_segment
+                                         # variant within this scenario family
         seed: int (optional)             # reproducibility seed (YAML ONLY; no CLI override)
         agents:                          # list in execution order
             - name: agent1                 # optional; auto-generated if omitted
@@ -217,7 +203,7 @@ def run_experiment_from_config(
                   total_limit: 5
 
     Behavior / Notes:
-        - Seeds: If 'seed' present it is validated & passed to `OneCampNDaysExperiment`; absent => stochastic run.
+        - Seeds: If 'seed' is present it is passed to the scenario factory; absent => stochastic run.
         - Policy parameter filtering: only kwargs accepted by the policy __init__ are forwarded.
         - Supported policies in this runner are limited to modern learning policies
           (`REINFORCE`, `ActorCritic`) and core deterministic baselines
@@ -227,7 +213,7 @@ def run_experiment_from_config(
         - Natural action-space scalar params such as `init_action_center`, `init_action_stddev`,
           and `min_action_stddev` are interpreted
           in unscaled action space at the config layer; if supplied and accepted by the policy constructor,
-          this runner scales them before instantiating the policy.
+          the runner scales them before instantiating the policy.
         - State/action scaling applied ONLY to TensorFlow (learning) policies; baseline / static
           policies (e.g., FixedBidPolicy) receive raw state/action data.
         - Per-epoch metrics: mean & std (population, ddof=0) of per-trajectory rewards for each agent.
@@ -236,7 +222,6 @@ def run_experiment_from_config(
         - config_hash: SHA256 over JSON dump of config minus non-semantic keys (label, logging) ensuring
           distinct seeds produce distinct hashes.
         - Returns: run_id (str) used in parquet filename.
-        - Unsupported: historical exp_* experiment mappings; this runner only supports the simplified schema.
 
     Runtime / Non-YAML Parameters:
         flush_every (int, CLI only): Number of epochs between parquet flushes when an output
@@ -262,21 +247,21 @@ def run_experiment_from_config(
         global_seed = int(yaml_seed)
         _seed_everything(global_seed)
 
-    experiment = OneCampNDaysExperiment(seed=global_seed)
+    scenario_factory = OneCampaignNDaysScenarioFactory(seed=global_seed)
 
-    # Choose environment setup
-    setup_name = config.get('setup')
-    if not isinstance(setup_name, str):
+    scenario_variant = config.get('scenario_variant')
+    if not isinstance(scenario_variant, str):
         raise ValueError(
-            "Missing or invalid 'setup' key. Provide one of: "
-            + ", ".join(sorted(SUPPORTED_SETUPS))
+            "Missing or invalid 'scenario_variant' key. Provide one of: "
+            + ", ".join(SCENARIO_VARIANTS)
         )
-    setup_name, setup_fn = _resolve_setup_function(experiment, setup_name)
-    env, auction_item_spec_ids = setup_fn()
+    scenario = scenario_factory.build(scenario_variant)
+    env = scenario.environment
+    auction_item_spec_ids = scenario.auction_item_spec_ids
 
     # Get scaling/de-scaling helpers.
     scale_states_func, actions_scaler, scale_actions_func, descale_actions_func = (
-        experiment.build_env_transforms(env)
+        scenario_factory.build_env_transforms(env)
     )
 
     # Build agents
@@ -359,7 +344,7 @@ def run_experiment_from_config(
     column_order = [
         "run_id",
         "config_hash",
-        "setup",
+        "scenario_variant",
         "global_seed",
         "num_days",
         "num_trajs",
@@ -383,7 +368,7 @@ def run_experiment_from_config(
         arrow_schema = pa.schema([
             ("run_id", pa.string()),
             ("config_hash", pa.string()),
-            ("setup", pa.string()),
+            ("scenario_variant", pa.string()),
             ("global_seed", pa.int64()),
             ("num_days", pa.int32()),
             ("num_trajs", pa.int32()),
@@ -465,7 +450,7 @@ def run_experiment_from_config(
                     batch_epoch_rows.append({
                         "run_id": run_id,
                         "config_hash": config_hash,
-                        "setup": setup_name,
+                        "scenario_variant": scenario_variant,
                         "global_seed": global_seed,
                         "num_days": num_of_days,
                         "num_trajs": num_of_trajs,
@@ -542,7 +527,7 @@ def main(yaml_path: str, output_dir: str | None = None, log_level: str | None = 
     with open(yaml_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
 
-    run_experiment_from_config(
+    run_from_config(
         config,
         output_dir_override=output_dir,
         flush_every=flush_every,
@@ -551,7 +536,7 @@ def main(yaml_path: str, output_dir: str | None = None, log_level: str | None = 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Run Derby experiment from YAML config.")
+    parser = argparse.ArgumentParser(description="Run Derby training from a YAML config.")
     parser.add_argument('--config', required=True, type=str, help='Path to YAML config file')
     parser.add_argument('-o', '--output-dir', dest='output_dir', type=str, default=None,
                         help='Optional directory to write epoch-level parquet logs')

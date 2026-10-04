@@ -1,5 +1,6 @@
 import logging
 import os
+from dataclasses import dataclass
 
 import numpy as np
 import tensorflow as tf
@@ -13,12 +14,23 @@ from derby.core.pmfs import PMF
 
 logger = logging.getLogger(__name__)
 
+SCENARIO_VARIANTS = ("one_segment", "two_segment")
 
-class OneCampNDaysExperiment:
+
+@dataclass(frozen=True)
+class OneCampaignNDaysScenario:
+    """A concrete environment instance for a selected scenario variant."""
+
+    variant: str
+    environment: OneCampaignNDaysEnv
+    auction_item_spec_ids: tuple[int, ...]
+
+
+class OneCampaignNDaysScenarioFactory:
 
     def __init__(self, seed: int | None = None):
         # Reset class-level UID generators so that spec and campaign IDs are predictable
-        # within each experiment run. This avoids cross-run drift when multiple processes
+        # within each run. This avoids cross-run drift when multiple processes
         # or repeated runs occur in the same Python interpreter.
         try:
             import itertools
@@ -49,7 +61,7 @@ class OneCampNDaysExperiment:
                 pass
             # Help make hashing deterministic in some Python ops
             os.environ.setdefault('PYTHONHASHSEED', str(seed))
-            logger.info("[Experiment] Seed set to %s", seed)
+            logger.info("[ScenarioFactory] Seed set to %s", seed)
         self.auction_item_specs = [
                         AuctionItemSpecification(name="male", item_type={"male"}),
                         AuctionItemSpecification(name="female", item_type={"female"})
@@ -69,7 +81,26 @@ class OneCampNDaysExperiment:
         self.first_price_auction = KthPriceAuction(1)
         self.second_price_auction = KthPriceAuction(2)
 
-    def build_one_segment_setup(self):
+    def build(self, variant: str) -> OneCampaignNDaysScenario:
+        """Create a concrete scenario instance for ``variant``."""
+        builders = {
+            "one_segment": self._build_one_segment,
+            "two_segment": self._build_two_segment,
+        }
+        try:
+            environment, auction_item_spec_ids = builders[variant]()
+        except KeyError:
+            supported = ", ".join(SCENARIO_VARIANTS)
+            raise ValueError(
+                f"Unknown scenario variant: {variant}. Supported variants: {supported}"
+            ) from None
+        return OneCampaignNDaysScenario(
+            variant=variant,
+            environment=environment,
+            auction_item_spec_ids=tuple(auction_item_spec_ids),
+        )
+
+    def _build_one_segment(self):
         campaigns = self.campaigns
         auction_item_spec_pmf = PMF({
                     self.auction_item_specs[0]: 0,
@@ -92,7 +123,7 @@ class OneCampNDaysExperiment:
         )
         return env, auction_item_spec_ids
 
-    def build_two_segment_setup(self):
+    def _build_two_segment(self):
         campaigns = self.campaigns
         auction_item_spec_pmf = PMF({
                     self.auction_item_specs[0]: 1,

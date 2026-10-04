@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from utils.analysis import expand_policy_params, filter_epoch_rewards, load_epoch_rewards  # noqa: E402
 from pipeline.make_config_grid import generate_configs  # noqa: E402
-from derby.experiments.one_camp_n_days.runner import compute_config_hash  # noqa: E402
+from derby.scenarios.one_campaign_n_days.runner import compute_config_hash  # noqa: E402
 
 
 OUT = ROOT / "paper" / "zero_collapse" / "data" / "reward_traces.parquet"

@@ -1,6 +1,6 @@
 from collections import deque
 
-from pipeline.run_experiment_sweep import MAX_STDERR_TAIL, _append_output_tail
+from pipeline.run_sweep import MAX_STDERR_TAIL, _append_output_tail
 
 
 def test_output_tail_keeps_tail_of_single_oversized_line() -> None:

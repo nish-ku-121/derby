@@ -1,6 +1,6 @@
 # Smooth final policy parameterization on top of REINFORCE Control 2.
 sweep_name: reinforce_smooth_parameterization
-base_config: configs/one_camp_n_days_base.yaml
+base_config: configs/one_campaign_n_days_base.yaml
 override:
   agents.0.policy: REINFORCE
   agents.0.label: "{agents.0.policy}|SmoothParam|Baseline={agents.0.params.use_baseline}|Hidden={agents.0.params.actor_hidden_activation}|Final={agents.0.params.actor_final_activation}|LR={agents.0.params.learning_rate}|Init={agents.0.params.param_kernel_initializer}"
